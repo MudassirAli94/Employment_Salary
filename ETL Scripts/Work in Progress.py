@@ -89,7 +89,8 @@ job_data = []
 for item in data['data']:
     job_info = {
         'job_title': item['title'],
-        'location': item['jobLocation']['city'],
+        'city': item['jobLocation']['city'],
+        'state': item['jobLocation']['state'],
         'salary': item['salary'],
         'employmentType': item['employmentType'],
         #'date': item['expirationDate'],
@@ -138,5 +139,29 @@ def extract_year_month(date_str):
 
 df['date'] = df['date'].apply(extract_year_month)
 
-print(df)
+state_abbreviations = {
+    "Alabama": "AL", "Alaska": "AK", "Arizona": "AZ", "Arkansas": "AR", "California": "CA",
+    "Colorado": "CO", "Connecticut": "CT", "Delaware": "DE", "Florida": "FL", "Georgia": "GA",
+    "Hawaii": "HI", "Idaho": "ID", "Illinois": "IL", "Indiana": "IN", "Iowa": "IA",
+    "Kansas": "KS", "Kentucky": "KY", "Louisiana": "LA", "Maine": "ME", "Maryland": "MD",
+    "Massachusetts": "MA", "Michigan": "MI", "Minnesota": "MN", "Mississippi": "MS",
+    "Missouri": "MO", "Montana": "MT", "Nebraska": "NE", "Nevada": "NV", "New Hampshire": "NH",
+    "New Jersey": "NJ", "New Mexico": "NM", "New York": "NY", "North Carolina": "NC",
+    "North Dakota": "ND", "Ohio": "OH", "Oklahoma": "OK", "Oregon": "OR", "Pennsylvania": "PA",
+    "Rhode Island": "RI", "South Carolina": "SC", "South Dakota": "SD", "Tennessee": "TN",
+    "Texas": "TX", "Utah": "UT", "Vermont": "VT", "Virginia": "VA", "Washington": "WA",
+    "West Virginia": "WV", "Wisconsin": "WI", "Wyoming": "WY",
+    "District of Columbia": "DC", "Puerto Rico": "PR"
+}
+def extract_state_abbreviation(state_str):
+    state_name = str(state_str).split(', ')[-1]
+    return state_abbreviations.get(state_name)
+
+# Apply the function to the 'state' column to create a new column 'state_short'
+df['state_short'] = df['state'].apply(extract_state_abbreviation)
+df_job_data = df[df['state_short'].isin(state_abbreviations.values())]
+df_job_data = df_job_data.drop(columns=['state'])
+df_job_data.insert(loc=2, column='state_short', value=df_job_data.pop('state_short'))
+
+print(df_job_data)
 
