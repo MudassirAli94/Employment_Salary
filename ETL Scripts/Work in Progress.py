@@ -46,6 +46,7 @@ print(startups_df.head(10))
 import requests
 import json
 import pandas as pd
+import re
 
 url = 'https://job-search-api.efinancialcareers.com/v1/efc/jobs/search'
 headers = {
@@ -106,6 +107,36 @@ for item in data['data']:
 
 
 df = pd.DataFrame(job_data)
+
+# Define a function to remove string values from salary
+def extract_salary(salary_str):
+    # Use regular expression to find numeric values
+    match = re.search(r'\d[\d,]*\d', salary_str)
+    if match:
+        value = float(match.group().replace(',', ''))
+        # Check if the value is less than 1000, implying it's in thousands
+        if value < 1000:
+            return value * 1000  # Convert to full amount in dollars
+        else:
+            return value
+    else:
+        return None
+        
+
+df['salary'] = df['salary'].apply(extract_salary)
+df = df.dropna(subset=['salary'])
+
+# Define a function to extract year and month from date
+def extract_year_month(date_str):
+    match = re.match(r'(\d{4})-(\d{2})-(\d{2})', date_str)
+    if match:
+        year = int(match.group(1))
+        month = int(match.group(2))
+        return year * 100 + month
+    else:
+        return None
+
+df['date'] = df['date'].apply(extract_year_month)
 
 print(df)
 
