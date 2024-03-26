@@ -5,15 +5,11 @@ import json
 from pathlib import Path
 from azure.storage.blob import BlobServiceClient, BlobClient
 from tqdm import tqdm
-from io import BytesIO
+import io
+import zipfile
+import datacommons_pandas as dc
 
 ## Extract data for levels fyi
-
-import pandas as pd
-from azure.storage.blob import BlobServiceClient, BlobClient
-from tqdm import tqdm
-from io import BytesIO
-import json
 
 # Initialize the connection to the Azure Blob Storage
 connection_string = 'DefaultEndpointsProtocol=https;AccountName=levelfyi;AccountKey=iZYEskIkgkTF43I/hrswZXkuFOhp7FDLrlP2cvZvQhKUBKGB6CCB360M0Hc7S/7P959/yydHuIJd+AStjvkMOw==;EndpointSuffix=core.windows.net'
@@ -131,3 +127,122 @@ startups_df.to_csv("startups.csv", index=False)
 
 print("Finished extracting and saving start ups data")
 print()
+
+## extract DMA data
+
+# URL of the JSON data
+url = 'https://gist.githubusercontent.com/curran/226a646101709048e3b006173a757ea7/raw/tv.json'
+
+# Send a GET request to the URL
+response = requests.get(url)
+
+# Check if the request was successful (HTTP status code 200)
+if response.status_code == 200:
+    # Parse the JSON content of the response
+    data = response.json()
+    dma_df = pd.DataFrame(data).T
+else:
+    print(f'Failed to retrieve data: HTTP {response.status_code}')
+
+dma_df.to_csv("dma.csv", index=False)
+
+print("Finished extracting and saving DMA data")
+
+api_key = '47bd3da04feb2c5b78d1652c5d8db076d41328b5'
+
+url = f"https://api.census.gov/data/2020/dec/pl?get=NAME,P1_001N&for=county:*&in=state:*&key={api_key}"
+
+# Make a GET request to the API
+response = requests.get(url)
+
+# Check if the request was successful
+if response.status_code == 200:
+    # Parse the response JSON
+    data = response.json()
+
+    # Convert to a DataFrame
+    census_df = pd.DataFrame(data[1:], columns=data[0])
+else:
+    print(f'Failed to retrieve data: {response.status_code}')
+
+census_df.to_csv("2020_census_data.csv", index=False)
+
+print("Finished extracting and saving census data")
+
+## get gazetter data to get cities rolled up to counties for census data
+url = 'https://www2.census.gov/geo/docs/maps-data/data/gazetteer/2020_Gazetteer/2020_Gaz_place_national.zip'
+
+# Make a GET request to download the zip file
+response = requests.get(url)
+
+# Check if the request was successful
+if response.status_code == 200:
+    # Open the zip file in memory
+    zip_file = zipfile.ZipFile(io.BytesIO(response.content))
+    # Extract the file name within the zip file
+    file_name = zip_file.namelist()[0]
+    # Read the extracted file into a pandas DataFrame
+    gaz_df = pd.read_csv(zip_file.open(file_name), sep='\t', dtype=str)[["USPS","GEOID","ANSICODE","NAME"]]
+    # Display the first few rows of the DataFrame
+else:
+    print(f'Failed to download file: {response.status_code}')
+
+gaz_df["type_of_place"] = gaz_df["NAME"].apply(lambda i: i.split(" ")[-1])
+
+remove_list = [" " + n for n in gaz_df["type_of_place"].unique()]
+for n in gaz_df["type_of_place"].unique():
+    gaz_df["NAME"] = gaz_df["NAME"].apply(lambda i: str(i).replace(n,""))
+
+gaz_df['NAME'] = gaz_df['NAME'].str.strip()
+
+cols_list = gaz_df.columns.tolist()
+
+cols_list = [col.lower() for col in cols_list]
+
+gaz_df.columns = cols_list
+
+gaz_df = gaz_df.rename(columns={"usps":"state","geoid":"geo_id","ansicode":"ansi_code"})
+
+# Prefixing GeoIDs with "geoId/"
+# Prepare city GeoIDs list
+geo_list = ["geoId/" + geo_id for geo_id in gaz_df['geo_id'].unique()]
+
+# Initialize an empty dictionary for city_id to counties mapping
+city_to_counties = {}
+
+
+# Function to process each partition
+def process_partition(geo_partition):
+    contained_counties = dc.get_property_values(geo_partition, 'containedInPlace')
+    county_geo_ids = set()
+    for counties in contained_counties.values():
+        county_geo_ids.update(counties)
+    county_names = dc.get_property_values(list(county_geo_ids), 'name')
+
+    # Update city_to_counties dictionary
+    for city_id, counties in contained_counties.items():
+        # Remove 'geoId/' prefix and update mapping
+        clean_city_id = city_id.replace('geoId/', '')
+        city_to_counties[clean_city_id] = [county_names.get(county_id, ['Unknown'])[0] for county_id in counties]
+
+
+# Assuming you split the geo_list due to limitations, adjust the ranges as necessary
+process_partition(geo_list[0:20000])  # Process the first partition
+process_partition(geo_list[20000:])  # Process the second partition
+
+# Convert the city_to_counties dictionary into a DataFrame
+df_city_to_counties = pd.DataFrame(list(city_to_counties.items()), columns=['geo_id', 'county'])
+
+df_atomic_counties = df_city_to_counties.explode('county')
+
+# Remove any digits (which in this case are zip codes) and additional commas from the 'county' column
+df_atomic_counties['county'] = df_atomic_counties['county'].str.replace(r'\, \d+', '', regex=True)
+
+gaz_df = gaz_df.merge(df_atomic_counties, on='geo_id', how='left')
+
+gaz_df = gaz_df[["state","county","name","type_of_place","geo_id","ansi_code"]]
+pd.set_option('display.max_rows', None)
+
+gaz_df.to_csv("gazetteer_data.csv", index=False)
+
+print("Finished extracting and saving gazetteer data")
