@@ -257,3 +257,46 @@ dma_df.name = dma_df.name.apply(lambda i: i.replace("St Joseph","St. Joseph"))
 dma_df = dma_df.sort_values(by="rank")
 
 print(dma_df.head())
+
+## transform efinancial data
+
+# Define a function to remove string values from salary
+def extract_salary(salary_str):
+    # Use regular expression to find numeric values
+    match = re.search(r'\d[\d,]*\d', salary_str)
+    if match:
+        value = float(match.group().replace(',', ''))
+        # Check if the value is less than 1000, implying it's in thousands
+        if value < 1000:
+            return value * 1000  # Convert to full amount in dollars
+        else:
+            return value
+    else:
+        return None
+        
+
+efinancial_df['salary'] = efinancial_df['salary'].apply(extract_salary)
+efinancial_df = efinancial_df.dropna(subset=['salary'])
+
+# Define a function to extract year and month from date
+def extract_year_month(date_str):
+    match = re.match(r'(\d{4})-(\d{2})-(\d{2})', date_str)
+    if match:
+        year = int(match.group(1))
+        month = int(match.group(2))
+        return year * 100 + month
+    else:
+        return None
+
+efinancial_df['date'] = efinancial_df['date'].apply(extract_year_month)
+def extract_state_abbreviation(state_str):
+    state_name = str(state_str).split(', ')[-1]
+    return state_abbreviations.get(state_name)
+
+# Apply the function to the 'state' column to create a new column 'state_short'
+efinancial_df['state_short'] = efinancial_df['state'].apply(extract_state_abbreviation)
+df_job_data = efinancial_df[efinancial_df['state_short'].isin(state_abbreviations.values())]
+df_job_data = df_job_data.drop(columns=['state'])
+df_job_data.insert(loc=2, column='state_short', value=df_job_data.pop('state_short'))
+
+print(df_job_data)
