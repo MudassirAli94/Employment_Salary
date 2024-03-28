@@ -107,7 +107,7 @@ for item in data['data']:
     job_data.append(job_info)
 
 
-df = pd.DataFrame(job_data)
+efinancial_df = pd.DataFrame(job_data)
 
 # Define a function to remove string values from salary
 def extract_salary(salary_str):
@@ -124,8 +124,8 @@ def extract_salary(salary_str):
         return None
         
 
-df['salary'] = df['salary'].apply(extract_salary)
-df = df.dropna(subset=['salary'])
+efinancial_df['salary'] = efinancial_df['salary'].apply(extract_salary)
+efinancial_df = efinancial_df.dropna(subset=['salary'])
 
 # Define a function to extract year and month from date
 def extract_year_month(date_str):
@@ -137,7 +137,7 @@ def extract_year_month(date_str):
     else:
         return None
 
-df['date'] = df['date'].apply(extract_year_month)
+efinancial_df['date'] = efinancial_df['date'].apply(extract_year_month)
 
 state_abbreviations = {
     "Alabama": "AL", "Alaska": "AK", "Arizona": "AZ", "Arkansas": "AR", "California": "CA",
@@ -158,8 +158,8 @@ def extract_state_abbreviation(state_str):
     return state_abbreviations.get(state_name)
 
 # Apply the function to the 'state' column to create a new column 'state_short'
-df['state_short'] = df['state'].apply(extract_state_abbreviation)
-df_job_data = df[df['state_short'].isin(state_abbreviations.values())]
+efinancial_df['state_short'] = efinancial_df['state'].apply(extract_state_abbreviation)
+df_job_data = efinancial_df[efinancial_df['state_short'].isin(state_abbreviations.values())]
 df_job_data = df_job_data.drop(columns=['state'])
 df_job_data.insert(loc=2, column='state_short', value=df_job_data.pop('state_short'))
 
