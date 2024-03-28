@@ -62,3 +62,7 @@ def read_table_from_bq(query,project_id):
     # Read the data from BigQuery into a pandas DataFrame
     return pandas_gbq.read_gbq(query, project_id=project_id, credentials=credentials)
 
+
+## to make credentials open goiogle cloud SDK shell and type the following:
+## gcloud iam service-accounts keys create "<location of key>" --iam-account group9@dw-group-project.iam.gserviceaccount.com
+
