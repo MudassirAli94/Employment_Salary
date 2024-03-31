@@ -261,6 +261,8 @@ print(dma_df.head())
 ## transform efinancial data
 
 # Define a function to remove string values from salary
+efinancial_df=pd.read_csv("efinancial.csv")
+
 def extract_salary(salary_str):
     # Use regular expression to find numeric values
     match = re.search(r'\d[\d,]*\d', salary_str)
