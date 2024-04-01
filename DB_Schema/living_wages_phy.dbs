@@ -1,0 +1,167 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<project name="cost_of_living_dw_lgl" id="GoogleBigQuery-11fb" database="GoogleBigQuery" >
+	<schema name="cost_of_living_dw_lgl" >
+		<table name="dm_company" prior="dm_start_ups" >
+			<column name="company_id" prior="start_ups_id" type="string" jt="12" mandatory="y" />
+			<column name="company_info_name" type="string" jt="12" mandatory="y" />
+			<column name="company_info_icon" type="string" jt="12" mandatory="y" />
+			<column name="num_employees" type="int64" jt="4" mandatory="y" />
+			<column name="date" type="int64" jt="4" mandatory="y" />
+			<index name="pk_dm_start_ups" unique="PRIMARY_KEY" >
+				<column name="company_id" />
+			</index>
+		</table>
+		<table name="dm_dma" prior="dm_" >
+			<column name="dma_id" type="int64" jt="4" mandatory="y" />
+			<column name="rank" type="int64" jt="4" mandatory="y" />
+			<column name="tv_homes" type="int64" jt="4" mandatory="y" />
+			<column name="percent_of_united_states" type="float" jt="6" mandatory="y" />
+			<column name="location_id" type="string" jt="12" mandatory="y" />
+			<index name="pk_dm_dma" unique="PRIMARY_KEY" >
+				<column name="dma_id" />
+			</index>
+			<fk name="fk_dm_dma_dm_location" to_schema="cost_of_living_dw_lgl" to_table="dm_location" >
+				<fk_column name="location_id" pk="location_id" />
+			</fk>
+		</table>
+		<table name="dm_employee" prior="Tbl" >
+			<column name="employee_id" type="string" jt="12" mandatory="y" />
+			<column name="job_family" type="string" jt="12" mandatory="y" />
+			<column name="level" type="string" jt="12" mandatory="y" />
+			<column name="occupational_area" type="string" jt="12" mandatory="y" />
+			<column name="focus_tag" type="string" jt="12" mandatory="y" />
+			<column name="years_of_experience" type="string" jt="12" mandatory="y" />
+			<column name="years_at_company" type="string" jt="12" mandatory="y" />
+			<column name="years_at_level" type="string" jt="12" mandatory="y" />
+			<column name="work_arrangement" type="string" jt="12" mandatory="y" />
+			<column name="employmentType" type="string" jt="12" mandatory="y" />
+			<column name="company_id" type="string" jt="12" mandatory="y" />
+			<index name="pk_dm_employee" unique="PRIMARY_KEY" >
+				<column name="employee_id" />
+			</index>
+			<fk name="fk_dm_employee_dm_company" to_schema="cost_of_living_dw_lgl" to_table="dm_company" >
+				<fk_column name="company_id" pk="company_id" />
+			</fk>
+		</table>
+		<table name="dm_location" prior="dm_" >
+			<column name="location_id" type="string" jt="12" mandatory="y" />
+			<column name="state" type="string" jt="12" mandatory="y" />
+			<column name="state_short" type="string" jt="12" mandatory="y" />
+			<column name="county" type="string" jt="12" mandatory="y" />
+			<column name="name" type="string" jt="12" mandatory="y" />
+			<column name="county_or_city" prior="type_of_place" type="string" jt="12" mandatory="y" />
+			<column name="type_of_place" type="string" jt="12" mandatory="y" />
+			<column name="geo_id" type="string" jt="12" mandatory="y" />
+			<column name="ansi_code" type="string" jt="12" mandatory="y" />
+			<column name="total_population" type="int64" jt="4" mandatory="y" />
+			<index name="pk_dm_location" unique="PRIMARY_KEY" >
+				<column name="location_id" />
+			</index>
+		</table>
+		<table name="facts_salary" prior="Fact" >
+			<column name="fact_id" type="string" jt="12" mandatory="y" />
+			<column name="salary" type="int64" jt="4" mandatory="y" />
+			<column name="minimum_wage" type="float" jt="6" mandatory="y" />
+			<column name="tipped_wage" type="float" jt="6" mandatory="y" />
+			<column name="dma_id" type="int64" jt="4" mandatory="y" />
+			<column name="employee_id" type="string" jt="12" mandatory="y" />
+			<index name="pk_facts_salary" unique="PRIMARY_KEY" >
+				<column name="fact_id" />
+			</index>
+			<fk name="fk_facts_salary_dm_dma" to_schema="cost_of_living_dw_lgl" to_table="dm_dma" >
+				<fk_column name="dma_id" pk="dma_id" />
+			</fk>
+			<fk name="fk_facts_salary_dm_employee" to_schema="cost_of_living_dw_lgl" to_table="dm_employee" >
+				<fk_column name="employee_id" pk="employee_id" />
+			</fk>
+		</table>
+	</schema>
+	<layout name="Default Layout" id="Layout-22b1" show_relation="columns" >
+		<entity schema="cost_of_living_dw_lgl" name="dm_company" color="C1D8EE" x="80" y="576" />
+		<entity schema="cost_of_living_dw_lgl" name="dm_dma" color="C1D8EE" x="816" y="368" />
+		<entity schema="cost_of_living_dw_lgl" name="dm_employee" color="C1D8EE" x="368" y="352" />
+		<entity schema="cost_of_living_dw_lgl" name="dm_location" color="C1D8EE" x="1040" y="528" />
+		<entity schema="cost_of_living_dw_lgl" name="facts_salary" color="C1D8EE" x="608" y="368" />
+		<callout x="48" y="48" pointer="Round" >
+			<comment><![CDATA[This is a layout - a diagram with tools.
+- Right-click the layout to create new tables. 
+- Double-click table headers to edit. 
+- For a better understanding of the schema, create multiple layouts.
+- Save the design to the model file, and deploy from 'Schema / Create into the database'.]]></comment>
+		</callout>
+		<script name="SQL_Editor" id="Editor-34e" language="SQL" confirmed="y" >
+			<string><![CDATA[CREATE SCHEMA cost_of_living_dw_lgl;
+
+CREATE TABLE cost_of_living_dw_lgl.dm_company ( 
+	company_id string NOT NULL  ,
+	company_info_name string NOT NULL  ,
+	company_info_icon string NOT NULL  ,
+	num_employees int64 NOT NULL  ,
+	date int64 NOT NULL  
+ );
+
+ALTER TABLE cost_of_living_dw_lgl.dm_company ADD PRIMARY KEY ( company_id )  NOT ENFORCED;
+
+CREATE TABLE cost_of_living_dw_lgl.dm_employee ( 
+	employee_id string NOT NULL  ,
+	job_family string NOT NULL  ,
+	level string NOT NULL  ,
+	occupational_area string NOT NULL  ,
+	focus_tag string NOT NULL  ,
+	years_of_experience string NOT NULL  ,
+	years_at_company string NOT NULL  ,
+	years_at_level string NOT NULL  ,
+	work_arrangement string NOT NULL  ,
+	employmentType string NOT NULL  ,
+	company_id string NOT NULL  
+ );
+
+ALTER TABLE cost_of_living_dw_lgl.dm_employee ADD PRIMARY KEY ( employee_id )  NOT ENFORCED;
+
+CREATE TABLE cost_of_living_dw_lgl.dm_location ( 
+	location_id string NOT NULL  ,
+	state string NOT NULL  ,
+	state_short string NOT NULL  ,
+	county string NOT NULL  ,
+	name string NOT NULL  ,
+	county_or_city string NOT NULL  ,
+	type_of_place string NOT NULL  ,
+	geo_id string NOT NULL  ,
+	ansi_code string NOT NULL  ,
+	total_population int64 NOT NULL  
+ );
+
+ALTER TABLE cost_of_living_dw_lgl.dm_location ADD PRIMARY KEY ( location_id )  NOT ENFORCED;
+
+CREATE TABLE cost_of_living_dw_lgl.dm_dma ( 
+	dma_id int64 NOT NULL  ,
+	rank int64 NOT NULL  ,
+	tv_homes int64 NOT NULL  ,
+	percent_of_united_states float NOT NULL  ,
+	location_id string NOT NULL  
+ );
+
+ALTER TABLE cost_of_living_dw_lgl.dm_dma ADD PRIMARY KEY ( dma_id )  NOT ENFORCED;
+
+CREATE TABLE cost_of_living_dw_lgl.facts_salary ( 
+	fact_id string NOT NULL  ,
+	salary int64 NOT NULL  ,
+	minimum_wage float NOT NULL  ,
+	tipped_wage float NOT NULL  ,
+	dma_id int64 NOT NULL  ,
+	employee_id string NOT NULL  
+ );
+
+ALTER TABLE cost_of_living_dw_lgl.facts_salary ADD PRIMARY KEY ( fact_id )  NOT ENFORCED;
+
+ALTER TABLE cost_of_living_dw_lgl.dm_dma ADD CONSTRAINT fk_dm_dma_dm_location FOREIGN KEY ( location_id ) REFERENCES cost_of_living_dw_lgl.dm_location( location_id ) NOT ENFORCED;
+
+ALTER TABLE cost_of_living_dw_lgl.dm_employee ADD CONSTRAINT fk_dm_employee_dm_company FOREIGN KEY ( company_id ) REFERENCES cost_of_living_dw_lgl.dm_company( company_id ) NOT ENFORCED;
+
+ALTER TABLE cost_of_living_dw_lgl.facts_salary ADD CONSTRAINT fk_facts_salary_dm_dma FOREIGN KEY ( dma_id ) REFERENCES cost_of_living_dw_lgl.dm_dma( dma_id ) NOT ENFORCED;
+
+ALTER TABLE cost_of_living_dw_lgl.facts_salary ADD CONSTRAINT fk_facts_salary_dm_employee FOREIGN KEY ( employee_id ) REFERENCES cost_of_living_dw_lgl.dm_employee( employee_id ) NOT ENFORCED;
+]]></string>
+		</script>
+	</layout>
+</project>
