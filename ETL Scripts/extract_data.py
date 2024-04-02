@@ -8,6 +8,12 @@ from tqdm import tqdm
 import io
 import zipfile
 import datacommons_pandas as dc
+from gcp_functions import upload_dataframe_to_gcs
+
+## config for gcp functions
+YOUR_BUCKET_NAME = 'staging-group9-dw'
+PROJECT_ID = 'dw-group-project'
+
 
 ## Extract data for levels fyi
 
@@ -35,9 +41,15 @@ for blob in tqdm(blobs_list):
     levels_fyi_df = pd.concat([levels_fyi_df, blob_df], ignore_index=True)
 
 print()
-levels_fyi_df.to_csv("levels_fyi.csv", index=False)
+#levels_fyi_df.to_csv("levels_fyi.csv", index=False)
 print("Finished extracting and saving levels fyi data")
 print()
+
+## push data to GCS
+
+upload_dataframe_to_gcs(YOUR_BUCKET_NAME, levels_fyi_df, "levels_fyi", PROJECT_ID)
+
+
 
 
 ## Extract data for MIT living wages
@@ -62,7 +74,11 @@ for file_path in tqdm(directory_path.glob("*.json"), desc="Reading JSON files"):
 living_wage_df = pd.concat(dfs, ignore_index=True)
 print()
 
-living_wage_df.to_csv("mit_living_wages.csv", index=False)
+#living_wage_df.to_csv("mit_living_wages.csv", index=False)
+
+## push data to GCS
+
+upload_dataframe_to_gcs(YOUR_BUCKET_NAME, living_wage_df, "mit_living_wages", PROJECT_ID)
 
 print("Finished extracting and saving MIT living wages data")
 print()
@@ -91,7 +107,11 @@ clean_rows = [[col.strip() for col in row[:-1]] for row in rows]
 
 minimum_wage_df = pd.DataFrame(clean_rows, columns=clean_headers)
 
-minimum_wage_df.to_csv("minimum_wage_per_state.csv", index=False)
+#minimum_wage_df.to_csv("minimum_wage_per_state.csv", index=False)
+
+## push data to GCS
+
+upload_dataframe_to_gcs(YOUR_BUCKET_NAME, minimum_wage_df, "minimum_wage_per_state", PROJECT_ID)
 
 print("Finished extracting and saving minimum wage data")
 print()
@@ -123,7 +143,11 @@ startups_df = pd.DataFrame(data_rows)
 
 
 
-startups_df.to_csv("startups.csv", index=False)
+#startups_df.to_csv("startups.csv", index=False)
+
+## push data to GCS
+
+upload_dataframe_to_gcs(YOUR_BUCKET_NAME, startups_df, "startups_jobs", PROJECT_ID)
 
 print("Finished extracting and saving start ups data")
 print()
@@ -144,7 +168,11 @@ if response.status_code == 200:
 else:
     print(f'Failed to retrieve data: HTTP {response.status_code}')
 
-dma_df.to_csv("dma.csv", index=False)
+#dma_df.to_csv("dma.csv", index=False)
+
+## push data to GCS
+
+upload_dataframe_to_gcs(YOUR_BUCKET_NAME, dma_df, "dma_data", PROJECT_ID)
 
 print("Finished extracting and saving DMA data")
 
@@ -165,7 +193,11 @@ if response.status_code == 200:
 else:
     print(f'Failed to retrieve data: {response.status_code}')
 
-census_df.to_csv("2020_census_data.csv", index=False)
+#census_df.to_csv("2020_census_data.csv", index=False)
+
+## push data to GCS
+
+upload_dataframe_to_gcs(YOUR_BUCKET_NAME, census_df, "2020_census_data", PROJECT_ID)
 
 print("Finished extracting and saving census data")
 
@@ -243,11 +275,14 @@ gaz_df = gaz_df.merge(df_atomic_counties, on='geo_id', how='left')
 gaz_df = gaz_df[["state","county","name","type_of_place","geo_id","ansi_code"]]
 pd.set_option('display.max_rows', None)
 
-gaz_df.to_csv("gazetteer_data.csv", index=False)
+#gaz_df.to_csv("gazetteer_data.csv", index=False)
+
+## push data to GCS
+
+upload_dataframe_to_gcs(YOUR_BUCKET_NAME, gaz_df, "gazetteer_data", PROJECT_ID)
 
 print("Finished extracting and saving gazetteer data")
 
-## extract efinancial data
 url = 'https://job-search-api.efinancialcareers.com/v1/efc/jobs/search'
 headers = {
     'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:123.0) Gecko/20100101 Firefox/123.0',
@@ -309,6 +344,10 @@ for item in data['data']:
 
 efinancial_df = pd.DataFrame(job_data)
 efinancial_df.to_csv("efinancial.csv", index=False)
+
+## push data to GCS
+
+upload_dataframe_to_gcs(YOUR_BUCKET_NAME, efinancial_df, "efinancial_jobs", PROJECT_ID)
 
 print("Finished extracting and saving efinancial data")
 print()
