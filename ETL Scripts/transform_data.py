@@ -1,6 +1,13 @@
 import numpy as np
 import pandas as pd
+import re
+from gcp_functions import upload_dataframe_to_gcs, read_csv_from_gcs, upload_table_to_bq
 import sys
+
+## GCP configuration
+
+YOUR_BUCKET_NAME = 'staging-group9-dw'
+PROJECT_ID = 'dw-group-project'
 
 ## clean and transform levels_fyi_data
 
@@ -19,7 +26,7 @@ state_abbreviations = {
     "District of Columbia": "DC", "Puerto Rico": "PR", "Remote":"Remote"
 }
 
-levels_df = pd.read_csv("../levels_fyi.csv")
+levels_df = read_csv_from_gcs(bucket_name=YOUR_BUCKET_NAME, blob_name="levels_fyi_20240402165457.csv")
 
 levels_df['offerDate'] = levels_df['offerDate'].str.slice(start=0, stop=24)
 # Now, convert the 'offerDate' column to datetime without specifying a format
@@ -48,12 +55,12 @@ levels_df["tags"] = levels_df["tags"].apply(lambda i: str(i).replace("[",""))\
 ## dropping columns that are more than 50% missing
 
 missing_percentages = levels_df.isnull().mean() * 100
-print(missing_percentages)
 columns_to_drop = missing_percentages[missing_percentages > 50].index
 
 levels_df = levels_df.drop(columns=columns_to_drop)
 levels_df = levels_df.drop(columns=["location","companyInfo.slug","exchangeRate","companyInfo.registered",
                                     "baseSalaryCurrency","countryId","cityId",'compPerspective',"totalCompensation"])
+
 
 ## rename column to snake case
 def to_snake_case(column_name):
@@ -67,7 +74,7 @@ snake_case_columns = [to_snake_case(column) for column in levels_df.columns]
 
 levels_df.columns = snake_case_columns
 
-print(snake_case_columns)
+
 
 ## Rearrange columns
 
@@ -75,15 +82,22 @@ levels_df = levels_df[['uuid','state','state_short', 'city', 'title', 'job_famil
        'years_of_experience', 'years_at_company', 'years_at_level',
        'offer_date', 'work_arrangement', 'dma_id', 'base_salary', 'company_info_icon', 'company_info_name']]
 
+levels_df = levels_df.rename(columns = {"base_salary":"salary","uuid":"job_id"})
+levels_df = levels_df.drop_duplicates(subset = ["job_id"])
+
 ## convert floats to int
 
-for n in ["base_salary","dma_id"]:
+for n in ["salary","dma_id"]:
     levels_df[n] = levels_df[n].astype(int)
+
+## INSERT DATA INGESTION TO DATAWARE HOUSE CODE HERE
 
 
 print(levels_df.head())
 
 ## clean and transform mit living wages data
+
+living_wage_df = read_csv_from_gcs(bucket_name=YOUR_BUCKET_NAME, blob_name="mit_living_wages_20240402165516.csv")
 
 living_wage_df = pd.read_csv("../mit_living_wages.csv")
 
@@ -101,10 +115,18 @@ living_wage_df["county_or_city"] = living_wage_df["county_or_city"].apply(lambda
 living_wage_df["county_or_city"] = living_wage_df["county_or_city"].apply(lambda i: i.replace(" Borough",""))
 living_wage_df["county_or_city"] = living_wage_df["county_or_city"].apply(lambda i: i.split("-")[0])
 
+living_wage_df = living_wage_df.rename(columns={"annual_salary":"salary"})
+
+## INSERT DATA INGESTION TO DATAWARE HOUSE CODE HERE
+
 print(living_wage_df.head())
 
 
+
+
 ## clean and transform minimum wage data
+
+minimum_wage_df = read_csv_from_gcs(bucket_name=YOUR_BUCKET_NAME, blob_name="minimum_wage_per_state_20240402165518.csv")
 
 minimum_wage_df = pd.read_csv("../minimum_wage_per_state.csv")
 
@@ -122,10 +144,14 @@ minimum_wage_df['state_short'] = minimum_wage_df['state'].map(state_abbreviation
 
 minimum_wage_df = minimum_wage_df[["state", "state_short", "minimum_wage", "tipped_wage"]]
 
+## INSERT DATA INGESTION TO DATAWARE HOUSE CODE HERE
+
 print(minimum_wage_df.head())
 
 
 ## clean and transform start up jobs data
+
+start_ups_df = read_csv_from_gcs(bucket_name=YOUR_BUCKET_NAME, blob_name="startups_jobs_20240402165522.csv")
 start_ups_df = pd.read_csv("../startups.csv")
 
 
@@ -186,11 +212,15 @@ start_ups_df = start_ups_df.rename(columns = {"location":"city"})
 
 start_ups_df = start_ups_df[["job_title","city","state_short","salary","num_employees","date"]]
 
+## INSERT DATA INGESTION TO DATAWARE HOUSE CODE HERE
+
 print(start_ups_df.head())
+
+
 ## transform census data
 
-import re
 
+census_df = read_csv_from_gcs(bucket_name=YOUR_BUCKET_NAME, blob_name="2020_census_data_20240402165527.csv")
 census_df = pd.read_csv("2020_census_data.csv")
 
 
@@ -208,9 +238,16 @@ census_df["county"] = census_df["county"].apply(lambda i: i.replace(" city",""))
 
 census_df = census_df[['state','state_short','county','total_population']]
 
+
+## INSERT DATA INGESTION TO DATAWARE HOUSE CODE HERE
+
+
+
 print(census_df.head())
 
 ## transform gazetter data
+
+gaz_df = read_csv_from_gcs(bucket_name=YOUR_BUCKET_NAME, blob_name="gazetteer_data_20240402165546.csv")
 
 gaz_df = pd.read_csv("gazetteer_data.csv", dtype=str)
 gaz_df = gaz_df.rename(columns = {"state":"state_short"})
@@ -228,8 +265,12 @@ gaz_df["county"] = gaz_df["county"].apply(lambda i: i.replace(" County",""))
 
 gaz_df = gaz_df[['state','state_short','county','name','type_of_place','geo_id','ansi_code']]
 
+
+## INSERT DATA INGESTION TO DATAWARE HOUSE CODE HERE
 print(gaz_df.head())
 ## transform DMA data
+
+dma_df = read_csv_from_gcs(bucket_name=YOUR_BUCKET_NAME, blob_name="dma_data_20240402165524.csv")
 
 dma_df = pd.read_csv("dma.csv")
 
@@ -256,13 +297,18 @@ dma_df.name = dma_df.name.apply(lambda i: i.replace("St Joseph","St. Joseph"))
 
 dma_df = dma_df.sort_values(by="rank")
 
+## INSERT DATA INGESTION TO DATAWARE HOUSE CODE HERE
+
 print(dma_df.head())
+
 
 ## transform efinancial data
 
-# Define a function to remove string values from salary
-efinancial_df=pd.read_csv("efinancial.csv")
+efinancial_df = read_csv_from_gcs(bucket_name=YOUR_BUCKET_NAME, blob_name="efinancial_jobs_20240402165550.csv")
 
+efinancial_df = pd.read_csv("efinancial.csv")
+
+# Define a function to remove string values from salary
 def extract_salary(salary_str):
     # Use regular expression to find numeric values
     match = re.search(r'\d[\d,]*\d', salary_str)
@@ -275,10 +321,11 @@ def extract_salary(salary_str):
             return value
     else:
         return None
-        
+
 
 efinancial_df['salary'] = efinancial_df['salary'].apply(extract_salary)
 efinancial_df = efinancial_df.dropna(subset=['salary'])
+
 
 # Define a function to extract year and month from date
 def extract_year_month(date_str):
@@ -290,10 +337,14 @@ def extract_year_month(date_str):
     else:
         return None
 
+
 efinancial_df['date'] = efinancial_df['date'].apply(extract_year_month)
+
+
 def extract_state_abbreviation(state_str):
     state_name = str(state_str).split(', ')[-1]
     return state_abbreviations.get(state_name)
+
 
 # Apply the function to the 'state' column to create a new column 'state_short'
 efinancial_df['state_short'] = efinancial_df['state'].apply(extract_state_abbreviation)
@@ -301,4 +352,6 @@ df_job_data = efinancial_df[efinancial_df['state_short'].isin(state_abbreviation
 df_job_data = df_job_data.drop(columns=['state'])
 df_job_data.insert(loc=2, column='state_short', value=df_job_data.pop('state_short'))
 
+
+## INSERT DATA INGESTION TO DATAWARE HOUSE CODE HERE
 print(df_job_data)
