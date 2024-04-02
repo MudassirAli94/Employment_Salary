@@ -25,7 +25,7 @@
 			</fk>
 		</table>
 		<table name="dm_employee" prior="Tbl" >
-			<column name="employee_id" type="string" jt="12" mandatory="y" />
+			<column name="job_id" type="string" jt="12" mandatory="y" />
 			<column name="job_family" type="string" jt="12" mandatory="y" />
 			<column name="level" type="string" jt="12" mandatory="y" />
 			<column name="occupational_area" type="string" jt="12" mandatory="y" />
@@ -37,7 +37,7 @@
 			<column name="employmentType" type="string" jt="12" mandatory="y" />
 			<column name="company_id" type="string" jt="12" mandatory="y" />
 			<index name="pk_dm_employee" unique="PRIMARY_KEY" >
-				<column name="employee_id" />
+				<column name="job_id" />
 			</index>
 			<fk name="fk_dm_employee_dm_company" to_schema="cost_of_living_dw_lgl" to_table="dm_company" >
 				<fk_column name="company_id" pk="company_id" />
@@ -64,7 +64,7 @@
 			<column name="minimum_wage" type="float" jt="6" mandatory="y" />
 			<column name="tipped_wage" type="float" jt="6" mandatory="y" />
 			<column name="dma_id" type="int64" jt="4" mandatory="y" />
-			<column name="employee_id" type="string" jt="12" mandatory="y" />
+			<column name="job_id" type="string" jt="12" mandatory="y" />
 			<index name="pk_facts_salary" unique="PRIMARY_KEY" >
 				<column name="fact_id" />
 			</index>
@@ -72,7 +72,7 @@
 				<fk_column name="dma_id" pk="dma_id" />
 			</fk>
 			<fk name="fk_facts_salary_dm_employee" to_schema="cost_of_living_dw_lgl" to_table="dm_employee" >
-				<fk_column name="employee_id" pk="employee_id" />
+				<fk_column name="job_id" pk="job_id" />
 			</fk>
 		</table>
 	</schema>
@@ -103,7 +103,7 @@ CREATE TABLE cost_of_living_dw_lgl.dm_company (
 ALTER TABLE cost_of_living_dw_lgl.dm_company ADD PRIMARY KEY ( company_id )  NOT ENFORCED;
 
 CREATE TABLE cost_of_living_dw_lgl.dm_employee ( 
-	employee_id string NOT NULL  ,
+	job_id string NOT NULL  ,
 	job_family string NOT NULL  ,
 	level string NOT NULL  ,
 	occupational_area string NOT NULL  ,
@@ -116,7 +116,7 @@ CREATE TABLE cost_of_living_dw_lgl.dm_employee (
 	company_id string NOT NULL  
  );
 
-ALTER TABLE cost_of_living_dw_lgl.dm_employee ADD PRIMARY KEY ( employee_id )  NOT ENFORCED;
+ALTER TABLE cost_of_living_dw_lgl.dm_employee ADD PRIMARY KEY ( job_id )  NOT ENFORCED;
 
 CREATE TABLE cost_of_living_dw_lgl.dm_location ( 
 	location_id string NOT NULL  ,
@@ -149,7 +149,7 @@ CREATE TABLE cost_of_living_dw_lgl.facts_salary (
 	minimum_wage float NOT NULL  ,
 	tipped_wage float NOT NULL  ,
 	dma_id int64 NOT NULL  ,
-	employee_id string NOT NULL  
+	job_id string NOT NULL  
  );
 
 ALTER TABLE cost_of_living_dw_lgl.facts_salary ADD PRIMARY KEY ( fact_id )  NOT ENFORCED;
@@ -160,7 +160,7 @@ ALTER TABLE cost_of_living_dw_lgl.dm_employee ADD CONSTRAINT fk_dm_employee_dm_c
 
 ALTER TABLE cost_of_living_dw_lgl.facts_salary ADD CONSTRAINT fk_facts_salary_dm_dma FOREIGN KEY ( dma_id ) REFERENCES cost_of_living_dw_lgl.dm_dma( dma_id ) NOT ENFORCED;
 
-ALTER TABLE cost_of_living_dw_lgl.facts_salary ADD CONSTRAINT fk_facts_salary_dm_employee FOREIGN KEY ( employee_id ) REFERENCES cost_of_living_dw_lgl.dm_employee( employee_id ) NOT ENFORCED;
+ALTER TABLE cost_of_living_dw_lgl.facts_salary ADD CONSTRAINT fk_facts_salary_dm_employee FOREIGN KEY ( job_id ) REFERENCES cost_of_living_dw_lgl.dm_employee( job_id ) NOT ENFORCED;
 ]]></string>
 		</script>
 	</layout>

@@ -11,7 +11,7 @@ CREATE TABLE cost_of_living_dw_lgl.dm_company (
 ALTER TABLE cost_of_living_dw_lgl.dm_company ADD PRIMARY KEY ( company_id )  NOT ENFORCED;
 
 CREATE TABLE cost_of_living_dw_lgl.dm_employee ( 
-	employee_id string NOT NULL  ,
+	job_id string NOT NULL  ,
 	job_family string NOT NULL  ,
 	level string NOT NULL  ,
 	occupational_area string NOT NULL  ,
@@ -24,7 +24,7 @@ CREATE TABLE cost_of_living_dw_lgl.dm_employee (
 	company_id string NOT NULL  
  );
 
-ALTER TABLE cost_of_living_dw_lgl.dm_employee ADD PRIMARY KEY ( employee_id )  NOT ENFORCED;
+ALTER TABLE cost_of_living_dw_lgl.dm_employee ADD PRIMARY KEY ( job_id )  NOT ENFORCED;
 
 CREATE TABLE cost_of_living_dw_lgl.dm_location ( 
 	location_id string NOT NULL  ,
@@ -57,7 +57,7 @@ CREATE TABLE cost_of_living_dw_lgl.facts_salary (
 	minimum_wage float NOT NULL  ,
 	tipped_wage float NOT NULL  ,
 	dma_id int64 NOT NULL  ,
-	employee_id string NOT NULL  
+	job_id string NOT NULL  
  );
 
 ALTER TABLE cost_of_living_dw_lgl.facts_salary ADD PRIMARY KEY ( fact_id )  NOT ENFORCED;
@@ -68,4 +68,4 @@ ALTER TABLE cost_of_living_dw_lgl.dm_employee ADD CONSTRAINT fk_dm_employee_dm_c
 
 ALTER TABLE cost_of_living_dw_lgl.facts_salary ADD CONSTRAINT fk_facts_salary_dm_dma FOREIGN KEY ( dma_id ) REFERENCES cost_of_living_dw_lgl.dm_dma( dma_id ) NOT ENFORCED;
 
-ALTER TABLE cost_of_living_dw_lgl.facts_salary ADD CONSTRAINT fk_facts_salary_dm_employee FOREIGN KEY ( employee_id ) REFERENCES cost_of_living_dw_lgl.dm_employee( employee_id ) NOT ENFORCED;
+ALTER TABLE cost_of_living_dw_lgl.facts_salary ADD CONSTRAINT fk_facts_salary_dm_employee FOREIGN KEY ( job_id ) REFERENCES cost_of_living_dw_lgl.dm_employee( job_id ) NOT ENFORCED;
