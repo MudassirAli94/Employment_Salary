@@ -320,7 +320,7 @@ def extract_salary(salary_str):
         else:
             return value
     else:
-        return None
+        return 0
 
 
 efinancial_df['salary'] = efinancial_df['salary'].apply(extract_salary)
