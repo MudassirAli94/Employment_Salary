@@ -5,26 +5,32 @@ import pandas as pd
 from io import StringIO
 from google.oauth2 import service_account
 import pandas_gbq
+import json
 
-def upload_dataframe_to_gcs(bucket_name, df, destination_blob_name, project_id):
+def upload_dataframe_to_gcs(bucket_name, df, file_name, project_id):
     now = datetime.now()
 
+    formatted_date = now.strftime("%Y-%m-%d")
+
+    destination_folder = f"{formatted_date}"
+
     formatted_time = now.strftime("%Y%m%d%H%M%S")
-    destination_blob_name_with_timestamp = f"{destination_blob_name}_{formatted_time}.csv"
+    file_name = f"{file_name}_{formatted_time}.csv"
 
     csv_string = df.to_csv(index=False)
+
     storage_client = storage.Client(project=project_id)
     bucket = storage_client.bucket(bucket_name)
-    blob = bucket.blob(destination_blob_name_with_timestamp)
+
+    blob = bucket.blob(f"{destination_folder}/{file_name}")
     blob.upload_from_string(csv_string, content_type='text/csv')
 
-    print(f"DataFrame uploaded to {destination_blob_name_with_timestamp} in bucket {bucket_name}.")
+    print(f"DataFrame uploaded to {bucket_name}/{destination_folder}/{file_name}.")
 
-
-def read_csv_from_gcs(bucket_name, blob_name):
+def read_csv_from_gcs(bucket_name, file_name):
     storage_client = storage.Client()
     bucket = storage_client.bucket(bucket_name)
-    blob = bucket.blob(blob_name)
+    blob = bucket.blob(file_name)
     data = blob.download_as_text()
     df = pd.read_csv(StringIO(data))
 
@@ -57,12 +63,13 @@ def upload_table_to_bq(job_config, df, project_id, dataset_name,table_name):
 # )
 
 def read_table_from_bq(query,project_id):
-    credentials = service_account.Credentials.from_service_account_file(
-        r"C:\Users\Mudas\Documents\school\Baruch\Data Warehouse\data\Term Project.json")
+
+    with open('config.json') as config_file:
+        config = json.load(config_file)
+
+    key_path = config['key_path']
+
+    credentials = service_account.Credentials.from_service_account_file(key_path)
     # Read the data from BigQuery into a pandas DataFrame
-    return pandas_gbq.read_gbq(query, project_id=project_id, credentials=credentials)
-
-
-## to make credentials open goiogle cloud SDK shell and type the following:
-## gcloud iam service-accounts keys create "<location of key>" --iam-account group9@dw-group-project.iam.gserviceaccount.com
-
+    df = pandas_gbq.read_gbq(query, project_id=project_id, credentials=credentials)
+    return df
