@@ -175,7 +175,9 @@ else:
 upload_dataframe_to_gcs(YOUR_BUCKET_NAME, dma_df, "dma_data", PROJECT_ID)
 
 print("Finished extracting and saving DMA data")
+print()
 
+# Example API key placeholder
 api_key = '47bd3da04feb2c5b78d1652c5d8db076d41328b5'
 
 url = f"https://api.census.gov/data/2020/dec/pl?get=NAME,P1_001N&for=county:*&in=state:*&key={api_key}"
@@ -190,6 +192,9 @@ if response.status_code == 200:
 
     # Convert to a DataFrame
     census_df = pd.DataFrame(data[1:], columns=data[0])
+
+    # Construct the GEOID column
+    census_df['county_geo_id'] = census_df['state'] + census_df['county']
 else:
     print(f'Failed to retrieve data: {response.status_code}')
 
