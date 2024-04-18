@@ -2,10 +2,9 @@ import numpy as np
 import pandas as pd
 from fuzzywuzzy import process
 import re
-from gcp_functions import upload_dataframe_to_gcs, read_csv_from_gcs, upload_table_to_bq
-from google.cloud import bigquery
-from google.oauth2 import service_account
+from gcp_functions import read_csv_from_gcs
 import json
+import uuid
 import sys
 
 ## CREATING SCHEMA FOR DATA WAREHOUSE
@@ -43,8 +42,11 @@ import sys
 
 ## GCP configuration
 
-YOUR_BUCKET_NAME = 'staging-group9-dw'
-PROJECT_ID = 'dw-group-project'
+with open('config.json') as config_file:
+    config = json.load(config_file)
+
+YOUR_BUCKET_NAME = config["bucket_name"]
+PROJECT_ID = config["project_id"]
 
 ## clean and transform levels_fyi_data
 
@@ -63,7 +65,7 @@ state_abbreviations = {
     "District of Columbia": "DC", "Puerto Rico": "PR", "Remote":"Remote"
 }
 
-levels_df = read_csv_from_gcs(bucket_name=YOUR_BUCKET_NAME, blob_name="2024-04-15/levels_fyi_20240415170012.csv")
+levels_df = read_csv_from_gcs(bucket_name=YOUR_BUCKET_NAME, file_name="2024-04-15/levels_fyi_20240415170012.csv")
 
 levels_df['offerDate'] = levels_df['offerDate'].str.slice(start=0, stop=24)
 # Now, convert the 'offerDate' column to datetime without specifying a format
@@ -154,7 +156,7 @@ print(levels_df.head())
 
 ## clean and transform mit living wages data
 
-living_wage_df = read_csv_from_gcs(bucket_name=YOUR_BUCKET_NAME, blob_name="2024-04-15/mit_living_wages_20240415170017.csv")
+living_wage_df = read_csv_from_gcs(bucket_name=YOUR_BUCKET_NAME, file_name="2024-04-15/mit_living_wages_20240415170017.csv")
 
 living_wage_df = pd.read_csv("../mit_living_wages.csv")
 
@@ -236,7 +238,7 @@ living_wage_df = living_wage_df.rename(columns = {"salary":"mit_estimated_salary
 
 ## clean and transform minimum wage data
 
-minimum_wage_df = read_csv_from_gcs(bucket_name=YOUR_BUCKET_NAME, blob_name="2024-04-15/minimum_wage_per_state_20240415170019.csv")
+minimum_wage_df = read_csv_from_gcs(bucket_name=YOUR_BUCKET_NAME, file_name="2024-04-15/minimum_wage_per_state_20240415170019.csv")
 
 minimum_wage_df = pd.read_csv("../minimum_wage_per_state.csv")
 
@@ -261,7 +263,7 @@ print(minimum_wage_df.head())
 
 ## clean and transform start up jobs data
 
-start_ups_df = read_csv_from_gcs(bucket_name=YOUR_BUCKET_NAME, blob_name="2024-04-15/startups_jobs_20240415170023.csv")
+start_ups_df = read_csv_from_gcs(bucket_name=YOUR_BUCKET_NAME, file_name="2024-04-15/startups_jobs_20240415170023.csv")
 
 
 start_ups_df["num_employees"] = start_ups_df["num_employees"].apply(lambda i: str(i).split(" ")[0])\
@@ -329,7 +331,7 @@ print(start_ups_df.head())
 ## transform census data
 
 
-census_df = read_csv_from_gcs(bucket_name=YOUR_BUCKET_NAME, blob_name="2024-04-15/2020_census_data_20240415170027.csv")
+census_df = read_csv_from_gcs(bucket_name=YOUR_BUCKET_NAME, file_name="2024-04-15/2020_census_data_20240415170027.csv")
 
 
 census_df["county"] = census_df["NAME"].apply(lambda i: i.split(",")[0])
@@ -358,7 +360,7 @@ print(census_df.head())
 
 ## transform gazetter data
 
-gaz_df = read_csv_from_gcs(bucket_name=YOUR_BUCKET_NAME, blob_name="2024-04-15/gazetteer_data_20240415170051.csv")
+gaz_df = read_csv_from_gcs(bucket_name=YOUR_BUCKET_NAME, file_name="2024-04-15/gazetteer_data_20240415170051.csv")
 
 gaz_df = pd.read_csv("gazetteer_data.csv", dtype=str)
 gaz_df = gaz_df.rename(columns = {"state":"state_short"})
@@ -382,7 +384,7 @@ gaz_df = gaz_df.rename(columns = {"name":"location_name"})
 print(gaz_df.head())
 ## transform DMA data
 
-dma_df = read_csv_from_gcs(bucket_name=YOUR_BUCKET_NAME, blob_name="2024-04-15/dma_data_20240415170025.csv")
+dma_df = read_csv_from_gcs(bucket_name=YOUR_BUCKET_NAME, file_name="2024-04-15/dma_data_20240415170025.csv")
 
 dma_df = pd.read_csv("dma.csv")
 
@@ -416,7 +418,7 @@ print(dma_df.head())
 
 ## transform efinancial data
 
-efinancial_df = read_csv_from_gcs(bucket_name=YOUR_BUCKET_NAME, blob_name="2024-04-15/efinancial_jobs_20240415170055.csv")
+efinancial_df = read_csv_from_gcs(bucket_name=YOUR_BUCKET_NAME, file_name="2024-04-15/efinancial_jobs_20240415170055.csv")
 
 # Define a function to remove string values from salary
 def extract_salary(salary_str):
@@ -466,8 +468,6 @@ df_job_data.job_title = df_job_data.job_title.apply(lambda i: i.replace('"',''))
 df_job_data.job_title = df_job_data.job_title.apply(lambda i: i.replace("2025 ", ""))
 
 
-df_job_data.to_csv("efinancial.csv", index=False)
-
 ## INSERT DATA INGESTION TO DATAWARE HOUSE CODE HERE
 print(df_job_data)
 
@@ -516,8 +516,183 @@ dim_location_df = gaz_df[["geo_id","state","state_short","county","location_name
 dim_location_df = dim_location_df.merge(census_df[["county_geo_id","state","county"]], on = ["county","state"], how = "left")
 dim_location_df = dim_location_df.rename(columns = {"geo_id":"city_town_geo_id"})
 
-print(dim_location_df.head())
-print(dim_location_df.info())
+## get dim jobs dimension
+
+dim_jobs_df = efinancial_df[["job_title","city","state_short","salary"]].copy()
+dim_jobs_df = pd.concat([dim_jobs_df, start_ups_df[["job_title","city","state_short","salary"]]])
+
+## creating a primary key for the dim_jobs_df
+def generate_uuid():
+    return str(uuid.uuid4())
+
+# Apply the generate_uuid function to a new column 'job_id'
+dim_jobs_df['job_id'] = dim_jobs_df.apply(lambda x: generate_uuid(), axis=1)
+
+occupational_area_map = {
+    'Marketing Operations': 'Business & Financial Operations',
+    'Software Engineer': 'Computer & Mathematical',
+    'Mechanical Engineer': 'Architecture & Engineering',
+    'Program Manager': 'Management',
+    'Business Analyst': 'Business & Financial Operations',
+    'Software Engineering Manager': 'Computer & Mathematical',
+    'Recruiter': 'Human Resources',
+    'Geological Engineer': 'Architecture & Engineering',
+    'Accountant': 'Business & Financial Operations',
+    'Project Manager': 'Management',
+    'Business Development': 'Sales & Related',
+    'Technical Program Manager': 'Computer & Mathematical',
+    'Product Designer': 'Arts, Design, Entertainment, Sports, & Media',
+    'Financial Analyst': 'Business & Financial Operations',
+    'Sales': 'Sales & Related',
+    'Data Science Manager': 'Computer & Mathematical',
+    'Human Resources': 'Human Resources',
+    'Product Design Manager': 'Arts, Design, Entertainment, Sports, & Media',
+    'Solution Architect': 'Computer & Mathematical',
+    'Venture Capitalist': 'Business & Financial Operations',
+    'Product Manager': 'Management',
+    'Biomedical Engineer': 'Architecture & Engineering',
+    'Administrative Assistant': 'Office & Administrative Support',
+    'Technical Writer': 'Arts, Design, Entertainment, Sports, & Media',
+    'Civil Engineer': 'Architecture & Engineering',
+    'Chief of Staff': 'Management',
+    'Management Consultant': 'Management',
+    'Legal': 'Legal',
+    'Hardware Engineer': 'Computer & Mathematical',
+    'Copywriter': 'Arts, Design, Entertainment, Sports, & Media',
+    'Marketing': 'Business & Financial Operations',
+    'Customer Service': 'Office & Administrative Support',
+    'Data Scientist': 'Computer & Mathematical',
+    'Security Analyst': 'Computer & Mathematical',
+    'Information Technologist': 'Computer & Mathematical',
+    'Industrial Designer': 'Arts, Design, Entertainment, Sports, & Media',
+    'Founder': 'Management',
+    'Fashion Designer': 'Arts, Design, Entertainment, Sports, & Media',
+    'Investment Banker': 'Business & Financial Operations'
+}
+
+# Function to match job titles to job family and occupational area
+import re
+
+def match_job(title):
+    title_lower = title.lower()
+
+    # Using regex to match full words or specific phrases to avoid partial matches
+    if re.search(r'\b(cio|ceo|cto|coo|cfo|chief executive officer|chief technology officer|chief operating officer|chief)\b', title_lower):
+        return 'Chief of Staff', 'Management'
+
+    if re.search(r'\b(president|vice president|vp|avp|svp|director)\b', title_lower):
+        return 'Program Manager', 'Management'
+
+    if re.search(r'\b("lead software|lead devops|lead mobile|lead ios|lead frontend|lead backend|lead machine learning engineer")\b', title_lower):
+        return 'Software Engineering Manager', 'Computer & Mathematical'
+
+    if re.search(r'\b(lead data scientist|head of data science|manager, data sci|senior manager, data sci)\b', title_lower):
+        return 'Data Science Manager', 'Computer & Mathematical'
+
+    if re.search(r'\b(data science|data scientist)\b', title_lower):
+        return 'Data Scientist', 'Computer & Mathematical'
+
+    if re.search(r'\b(product manager|head of product|manager, product|product management|director of product|vp of product|product lead|lead product)\b', title_lower):
+        return 'Product Manager', 'Management'
+
+    if re.search(r'\b(business operation|bizops|business development|business intelligence)\b', title_lower):
+        return 'Business & Financial Operations', 'Business & Financial Operations'
+
+    if re.search(r'\b(machine learning engineer|analyst|analytics|quantitative|data engineer|computer vision|ux|principal ai|database)\b', title_lower):
+        return 'Computer & Mathematical', 'Computer & Mathematical'
+
+    if re.search(r'\b(wealth|investment|investments|banker|financial|finance)\b', title_lower):
+        return 'Financial Analyst', 'Business & Financial Operations'
+
+    if re.search(r'\b(product|content designer|brand designer)\b', title_lower):
+        return 'Product Designer', 'Arts, Design, Entertainment, Sports, & Media'
+
+    if re.search(r'\b(devops|developer|software|frontend|backend|front end|back end|fullstack|full stack|full-stack|principal engineer|systems engineer|support engineer|firmware engineer|solutions engineer)\b', title_lower):
+        return 'Software Engineer', 'Computer & Mathematical'
+
+    if re.search(r'\b(representative|customer service|customer experience|customer support)\b', title_lower):
+        return 'Customer Service', 'Office & Administrative Support'
+
+    if re.search(r'\b(actuary)\b', title_lower):
+        return 'Financial Analyst', 'Business & Financial Operations'
+
+    if re.search(r'\b(teller|cashier)\b', title_lower):
+        return 'Customer Service', 'Office & Administrative Support'
+
+    if re.search(r'\b(legal|counsel|attorney|lawyer|paralegal)\b', title_lower):
+        return 'Legal', 'Legal'
+
+    if re.search(r'\b(mechanical engineer|civil engineer|industrial engineer)\b', title_lower):
+        return 'Mechanical Engineer', 'Architecture & Engineering'
+
+    if re.search(r'\b(hardware engineer|hardware systems architect)\b', title_lower):
+        return 'Hardware Engineer', 'Architecture & Engineering'
+
+    if re.search(r'\b(underwriter)\b', title_lower):
+        return 'Copywriter', 'Arts, Design, Entertainment, Sports, & Media'
+
+    if re.search(r'\b(security engineer)\b', title_lower):
+        return 'Security Analyst', 'Computer & Mathematical'
+
+    if re.search(r'\b(systems engineer)\b', title_lower):
+        return 'Information Technologist', 'Computer & Mathematical'
+
+    if re.search(r'\b(solutions architect|solution architect)\b', title_lower):
+        return 'Solution Architect', 'Computer & Mathematical'
+
+    if re.search(r'\b(data governance|infrastructure engineer)\b', title_lower):
+        return 'Information Technologist', 'Computer & Mathematical'
+
+    if re.search(r'\b(sales engineer)\b', title_lower):
+        return 'Sales', 'Sales & Related'
+
+    if re.search(r'\b(manager|lead|head|supervisor|coordinator|executive)\b', title_lower):
+        return 'Management', 'Management'
+
+    return "Other", "Other"  # Fallback if no match is found
+
+# Test the function with example titles
+job_titles = ["Head of Digital Product and Channels", "Executive Director"]
+for job in job_titles:
+    print(f"Job Title: {job}, Category: {match_job(job)}")
+
+
+# Apply the final customer service specific matching function to the DataFrame
+dim_jobs_df['job_family'], dim_jobs_df['occupational_area'] = zip(*dim_jobs_df['job_title'].apply(match_job))
+
+# Display the updated DataFrame
+
+
+dim_jobs_df["state"] = dim_jobs_df["state_short"].map({abbrev: state for state, abbrev in state_abbreviations.items()})
+
+dim_jobs_df["city"] = dim_jobs_df["city"].apply(lambda i: i.replace(" City",""))
+dim_jobs_df["city"] = dim_jobs_df["city"].apply(lambda i: i.replace("Manhattan","New York"))
+
+## get minimum wage per state for dim_jobs_df
+dim_jobs_df = dim_jobs_df.merge(minimum_wage_df[["state","minimum_wage","tipped_wage"]], on = "state", how = "left")
+## get DMA data for dim_jobs_df
+dim_jobs_df = dim_jobs_df.merge(dma_df.rename(columns = {"location_name":"city"}), on = "city", how = "left")
+## get county data for dim_jobs_df
+dim_jobs_df = dim_jobs_df.merge(county_facts_df[["state","county","city","county_geo_id","total_population"]], on = ["city","state"], how = "left")
+## get average total_population for dim_jobs_df because many counties roll up to one city
+mean_population_df = dim_jobs_df.groupby("job_id")["total_population"].mean().reset_index()
+dim_jobs_df = dim_jobs_df.drop(columns=["total_population"])
+dim_jobs_df = dim_jobs_df.merge(mean_population_df, on = "job_id", how = "left")
+## merge living wages to get mit estimated salary
+dim_jobs_df = dim_jobs_df.merge(living_wage_df[["occupational_area","county","mit_estimated_salary"]], on = ["occupational_area","county"], how = "left")
+## get average mit estimated salary because many counties roll up to one city
+mean_mit_salary_df = dim_jobs_df.groupby("job_id")["mit_estimated_salary"].mean().reset_index()
+dim_jobs_df = dim_jobs_df.drop(columns=["mit_estimated_salary"])
+dim_jobs_df = dim_jobs_df.merge(mean_mit_salary_df, on = "job_id", how = "left")
+dim_jobs_df = dim_jobs_df.drop_duplicates(subset = ["job_id"])
+print(dim_jobs_df.head(20))
+print(living_wage_df.head(20))
+
+dim_jobs_df.to_csv("dim_jobs.csv", index=False)
+
+sys.exit(1)
+levels_dim_jobs_df = levels_facts_df[["job_id","company_name","company_icon","state","state_short","city","job_title","job_family","occupational_area"]].copy()
+
 
 
 
