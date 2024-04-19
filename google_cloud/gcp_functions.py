@@ -6,6 +6,7 @@ from io import StringIO
 from google.oauth2 import service_account
 import pandas_gbq
 import json
+from pandas_gbq import to_gbq
 
 def upload_dataframe_to_gcs(bucket_name, df, file_name, project_id):
     now = datetime.now()
@@ -73,3 +74,15 @@ def read_table_from_bq(query,project_id):
     # Read the data from BigQuery into a pandas DataFrame
     df = pandas_gbq.read_gbq(query, project_id=project_id, credentials=credentials)
     return df
+
+
+def insert_dataframe_to_bigquery(df, dataset_table_name, project_id, if_exists='replace'):
+    with open('config.json') as config_file:
+        config = json.load(config_file)
+
+    key_path = config['key_path']
+    credentials = service_account.Credentials.from_service_account_file(key_path)
+
+    key_path = config['key_path']
+    full_table_name = f'{project_id}.{dataset_table_name}'
+    to_gbq(df, full_table_name, project_id=project_id, if_exists=if_exists, credentials=credentials)
