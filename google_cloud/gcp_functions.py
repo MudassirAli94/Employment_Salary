@@ -82,8 +82,6 @@ def insert_dataframe_to_bigquery(df, dataset_table_name, project_id, if_exists='
 
     key_path = config['key_path']
     credentials = service_account.Credentials.from_service_account_file(key_path)
-
-    key_path = config['key_path']
     full_table_name = f'{project_id}.{dataset_table_name}'
     to_gbq(df, full_table_name, project_id=project_id, if_exists=if_exists, credentials=credentials)
 
