@@ -2,43 +2,12 @@ import numpy as np
 import pandas as pd
 from fuzzywuzzy import process
 import re
-from gcp_functions import read_csv_from_gcs
+from gcp_functions import read_csv_from_gcs, insert_dataframe_to_bigquery, create_bigquery_schema
 import json
 import uuid
-import sys
+from google.oauth2 import service_account
+from google.cloud import bigquery
 
-## CREATING SCHEMA FOR DATA WAREHOUSE
-
-# # Load configuration from config.json file
-# with open('config.json') as config_file:
-#     config = json.load(config_file)
-#
-# key_path = config['key_path']
-#
-# # Construct a BigQuery client object.
-# credentials = service_account.Credentials.from_service_account_file(
-#     key_path, scopes=["https://www.googleapis.com/auth/cloud-platform"],
-# )
-#
-# client = bigquery.Client(credentials=credentials, project=credentials.project_id)
-#
-# # Path to your SQL file
-# sql_file_path = 'living_wages_dw.sql'
-#
-# # Read your SQL file
-# with open(sql_file_path, 'r') as file:
-#     sql_commands = file.read().split(';')  # Assuming your commands are separated by ';'
-#
-# # Execute each command from the SQL file
-# for command in sql_commands:
-#     if command.strip() == "":
-#         continue  # Skipping empty commands
-#     print(f"Executing command: {command}")
-#     # Run a query job
-#     query_job = client.query(command)
-#     query_job.result()  # Wait for the job to complete
-#
-# print("Schema creation is complete.")
 
 ## GCP configuration
 
@@ -573,7 +542,6 @@ occupational_area_map = {
 }
 
 # Function to match job titles to job family and occupational area
-import re
 
 def match_job(title):
     title_lower = title.lower()
@@ -709,10 +677,30 @@ print()
 print("Are all our jobs in the facts table in our dim_job_table?",facts_df.job_id.isin(final_dims_jobs_df.job_id).sum() == facts_df.shape[0])
 print()
 
-final_dims_jobs_df.to_csv("dims_jobs.csv", index=False)
-facts_df.to_csv("facts.csv", index=False)
-dim_dma_df.to_csv("dim_dma.csv", index=False)
-dim_location_df.to_csv("dim_location.csv", index=False)
+## Ingest tables into datawarehouse
+
+## create schema
+
+sql_file_path = "dim_modeling.sql"
+
+create_bigquery_schema(sql_file_path=sql_file_path)
+
+## ingest tables into schema
+
+insert_dataframe_to_bigquery(df=final_dims_jobs_df,
+                             dataset_table_name='dim_jobs',
+                             project_id=PROJECT_ID)
+insert_dataframe_to_bigquery(df=dim_dma_df,
+                             dataset_table_name='dim_dma',
+                             project_id=PROJECT_ID)
+insert_dataframe_to_bigquery(df=dim_location_df,
+                             dataset_table_name='dim_location',
+                             project_id=PROJECT_ID)
+insert_dataframe_to_bigquery(df=facts_df,
+                             dataset_table_name='facts_jobs',
+                             project_id=PROJECT_ID)
+
+
 
 
 
