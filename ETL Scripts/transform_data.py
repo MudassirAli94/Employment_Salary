@@ -4,6 +4,8 @@ import re
 from gcp_functions import read_csv_from_gcs, insert_dataframe_to_bigquery, create_bigquery_schema
 import json
 import uuid
+from uszipcode import SearchEngine
+pd.set_option('display.max_columns', None)
 
 
 
@@ -288,59 +290,60 @@ print(start_ups_df.head())
 
 ## transform census data
 
-
-census_df = read_csv_from_gcs(bucket_name=YOUR_BUCKET_NAME, file_name="2024-04-15/2020_census_data_20240415170027.csv")
-
-
-census_df["county"] = census_df["NAME"].apply(lambda i: i.split(",")[0])
-census_df["county"] = census_df["county"].apply(lambda i:str(i).replace('"',''))
-census_df["county"] = census_df["county"].apply(lambda i: i.replace(" County",""))
-census_df["state"] = census_df["NAME"].apply(lambda i: i.split(", ")[1])
-census_df["total_population"] = census_df["P1_001N"].astype(int)
-census_df = census_df[["county_geo_id","county", "state", "total_population"]]
-census_df["state_short"] = census_df["state"].map(state_abbreviations)
-census_df["county"] = census_df["county"].apply(lambda i: i.replace(" Municipio",""))
-census_df["county"] = census_df["county"].apply(lambda i: i.replace(" Municipality",""))
-census_df["county"] = census_df["county"].apply(lambda i: i.replace(" City and Borough",""))
-census_df["county"] = census_df["county"].apply(lambda i: i.replace(" city",""))
-census_df["county_geo_id"] = census_df["county_geo_id"].astype(str).str.zfill(5)
-
-census_df = census_df[["county_geo_id",'state','state_short','county','total_population']]
-
-print(census_df.head(10))
+search = SearchEngine()
 
 
-## INSERT DATA INGESTION TO DATAWARE HOUSE CODE HERE
+all_zipcodes = search.by_coordinates(39.122229, -77.133578, radius=5000, returns=None)
 
 
+all_data = [z.to_dict() for z in all_zipcodes]
+
+all_zip_df = pd.DataFrame(all_data)
+all_zip_df = all_zip_df[["major_city", "county", "state" ,"zipcode","lat","lng","population", "population_density","land_area_in_sqmi","housing_units","occupied_housing_units"]]
+all_zip_df = all_zip_df.rename(columns={"state":"state_short"})
+all_zip_df["major_city"] = all_zip_df["major_city"].apply(lambda i: str(i).replace(" city",""))
+all_zip_df["major_city"] = all_zip_df["major_city"].apply(lambda i: str(i).replace(" City",""))
+
+abbrev_to_full_state = {v: k for k, v in state_abbreviations.items()}
+all_zip_df['state'] = all_zip_df['state_short'].map(abbrev_to_full_state)
+
+all_zip_df["primary_key"] = all_zip_df["major_city"] + "_" + all_zip_df["state"]
+
+aggregations = {
+    'population': 'sum',
+    'population_density': 'sum',
+    'land_area_in_sqmi': 'sum',
+    'housing_units': 'sum',
+    'occupied_housing_units': 'sum',
+    'lat': 'mean',
+    'lng': 'mean',
+    'county': 'first',  # Keep the first occurrence
+    'state': 'first',
+    "state_short": "first",
+    'major_city': 'first'
+}
+
+# Perform aggregation
+all_zip_aggregated_df = all_zip_df.groupby("primary_key").agg(aggregations).reset_index()
+
+# Rename columns
+all_zip_aggregated_df.rename(columns={
+    "population": "total_population",
+    "population_density": "total_population_density",
+    "land_area_in_sqmi": "total_land_area",
+    "housing_units": "total_housing_units",
+    "occupied_housing_units": "total_occupied_housing_units",
+    "lat": "latitude",
+    "lng": "longitude",
+    "major_city": "city",
+    "state": "state"
+}, inplace=True)
+
+census_df = all_zip_aggregated_df.copy()
 
 print(census_df.head())
 
-## transform gazetter data
 
-gaz_df = read_csv_from_gcs(bucket_name=YOUR_BUCKET_NAME, file_name="2024-04-15/gazetteer_data_20240415170051.csv")
-
-gaz_df = pd.read_csv("gazetteer_data.csv", dtype=str)
-gaz_df = gaz_df.rename(columns = {"state":"state_short"})
-gaz_df["state"] = gaz_df["state_short"].map({abbrev: state for state, abbrev in state_abbreviations.items()})
-ny_gaz_df = gaz_df[(gaz_df["county"] == "New York") & (gaz_df["name"]== "New York")]
-gaz_df = gaz_df[~gaz_df.county.isin(state_abbreviations.keys())]
-gaz_df = pd.concat([gaz_df, ny_gaz_df])
-gaz_df = gaz_df.sort_values(by = ["state","county","name"])
-gaz_df['county'] = gaz_df['county'].astype(str)
-gaz_df = gaz_df[~gaz_df['county'].str.match(r'^\s*\d{5}\s*$')]
-gaz_df = gaz_df[~gaz_df['county'].str.strip().str.isdigit()]
-gaz_df = gaz_df[gaz_df['county'].str.lower() != 'nan']
-gaz_df['county'] = gaz_df['county'].str.strip()
-gaz_df["county"] = gaz_df["county"].apply(lambda i: i.replace(" County",""))
-gaz_df.loc[(gaz_df['state'] == 'District of Columbia') & (gaz_df['name'] == 'Washington'), 'county'] = "District of Columbia"
-
-gaz_df = gaz_df[['state','state_short','county','name','type_of_place','geo_id','ansi_code']]
-gaz_df = gaz_df.rename(columns = {"name":"city"})
-
-
-## INSERT DATA INGESTION TO DATAWARE HOUSE CODE HERE
-print(gaz_df.head())
 ## transform DMA data
 
 dma_df = read_csv_from_gcs(bucket_name=YOUR_BUCKET_NAME, file_name="2024-04-15/dma_data_20240415170025.csv")
@@ -435,39 +438,38 @@ print(df_job_data)
 
 levels_facts_df = levels_df[["job_id", "dma_id", "state", "state_short","city","salary","years_of_experience","years_at_company","years_at_level", "occupational_area"]].copy()
 minimum_facts_df = minimum_wage_df[["state","minimum_wage","tipped_wage"]].copy()
-county_facts_df = census_df[["county_geo_id","state","state_short","county","total_population"]].copy()
-county_facts_df = county_facts_df.merge(gaz_df[["county","state_short","city","type_of_place"]], on = ["county","state_short"], how = "left")
-print(county_facts_df.head())
 
-living_wage_fact_df = living_wage_df.merge(gaz_df[["county","state_short","city","type_of_place"]], on = ["county","state_short"], how = "left")
+
+living_wage_fact_df = living_wage_df.rename(columns={"county":"city"}).merge(census_df[["county","state_short","city"]], on = ["city","state_short"], how = "left")
+
+print(living_wage_fact_df.head())
+
 levels_facts_df = levels_facts_df.merge(living_wage_fact_df[["occupational_area","city", "state_short","mit_estimated_salary"]]\
                                         , on = ["occupational_area","city","state_short"], how = "left")
 levels_facts_df.drop_duplicates(subset = ["job_id"], inplace=True)
 levels_facts_df = levels_facts_df.rename(columns = {"mit_estimated_salary":"mit_estimated_baseline_salary"})
 
-##merge with gaz_df to get city_town_geo_id
-levels_facts_df = levels_facts_df.merge(gaz_df[["state","city","geo_id"]], on = ["state","city"], how = "left")
-levels_facts_df = levels_facts_df.rename(columns = {"geo_id":"city_town_geo_id"})
 
 ## merge with dma_df
 levels_facts_df = levels_facts_df.merge(dma_df[["dma_id","rank","tv_homes","percent_of_united_states"]], on = "dma_id", how = "left")
 ## merge with minimum_wage_df
 levels_facts_df = levels_facts_df.merge(minimum_wage_df[["state","minimum_wage","tipped_wage"]], on = "state", how = "left")
 ## merge with county_facts_df
-levels_facts_df = levels_facts_df.merge(county_facts_df[["state","county","city","county_geo_id","total_population"]], on = ["city","state"], how = "left")
-## getting average total_population because of many counties rolling up to one city
-mean_population_df = levels_facts_df.groupby("job_id")["total_population"].mean().reset_index()
-levels_facts_df = levels_facts_df.drop(columns=["total_population"])
-levels_facts_df = levels_facts_df.merge(mean_population_df, on = "job_id", how = "left")
-levels_facts_df = levels_facts_df.rename(columns = {"total_population":"county_avg_total_population"})
-levels_facts_df["county_avg_total_population"] = round(levels_facts_df["county_avg_total_population"],0)
+levels_facts_df = levels_facts_df.merge(census_df, on = ["city","state"], how = "left")
 
-levels_facts_df = levels_facts_df.drop(columns=["state","state_short","city","occupational_area", "county"])
+
+levels_facts_df = levels_facts_df.rename(columns = {"state_short_y":"state_short"})
 levels_facts_df = levels_facts_df.drop_duplicates(subset = ["job_id"])
 
 levels_facts_df = levels_facts_df.drop_duplicates(subset = ["job_id"])
+
+levels_facts_df = levels_facts_df.drop(columns=["state","state_short_x","city","occupational_area", "county","latitude",
+                                                "longitude","state_short"
+                                                ])
+levels_facts_df = levels_facts_df.rename(columns = {"primary_key":"location_id"})
 
 facts_df = levels_facts_df.copy()
+
 
 
 
@@ -478,9 +480,8 @@ print(dim_dma_df.head())
 
 ## get dim location dimension
 
-dim_location_df = gaz_df[["geo_id","state","state_short","county","city","type_of_place"]].copy()
-dim_location_df = dim_location_df.merge(census_df[["county_geo_id","state","county"]], on = ["county","state"], how = "left")
-dim_location_df = dim_location_df.rename(columns = {"geo_id":"city_town_geo_id", "city":"location_name"})
+dim_location_df = census_df[["county","city","state","state_short","latitude","longitude","primary_key"]].copy()
+dim_location_df = dim_location_df.rename(columns = {"primary_key":"location_id"})
 
 ## get dim jobs dimension
 
@@ -633,14 +634,7 @@ dim_jobs_df = dim_jobs_df.merge(minimum_wage_df[["state","minimum_wage","tipped_
 ## get DMA data for dim_jobs_df
 dim_jobs_df = dim_jobs_df.merge(dma_df.rename(columns = {"location_name":"city"}), on = "city", how = "left")
 ## get county data for dim_jobs_df
-dim_jobs_df = dim_jobs_df.merge(county_facts_df[["state","county","city","county_geo_id","total_population"]], on = ["city","state"], how = "left")
-## get city_town_geo_id for dim_jobs_df
-dim_jobs_df = dim_jobs_df.merge(gaz_df[["state","city","geo_id"]], on = ["state","city"], how = "left")
-dim_jobs_df = dim_jobs_df.rename(columns = {"geo_id":"city_town_geo_id"})
-## get average total_population for dim_jobs_df because many counties roll up to one city
-mean_population_df = dim_jobs_df.groupby("job_id")["total_population"].mean().reset_index()
-dim_jobs_df = dim_jobs_df.drop(columns=["total_population"])
-dim_jobs_df = dim_jobs_df.merge(mean_population_df, on = "job_id", how = "left")
+dim_jobs_df = dim_jobs_df.merge(census_df, on = ["city","state"], how = "left")
 ## merge living wages to get mit estimated salary
 dim_jobs_df = dim_jobs_df.merge(living_wage_df[["occupational_area","county","mit_estimated_salary"]], on = ["occupational_area","county"], how = "left")
 ## get average mit estimated salary because many counties roll up to one city
@@ -649,22 +643,23 @@ dim_jobs_df = dim_jobs_df.drop(columns=["mit_estimated_salary"])
 dim_jobs_df = dim_jobs_df.merge(mean_mit_salary_df, on = "job_id", how = "left")
 dim_jobs_df = dim_jobs_df.drop_duplicates(subset = ["job_id"])
 
+dim_jobs_df = dim_jobs_df.rename(columns = {"primary_key":"location_id"})
+
 ## ingesting dim_jobs_facts to our facts_df
-dim_jobs_facts_df = dim_jobs_df[['job_id','city','state','state_short','job_title','job_family','occupational_area','salary','minimum_wage','tipped_wage','dma_id','total_population','mit_estimated_salary',"rank","tv_homes","percent_of_united_states"]].copy()
-dim_jobs_facts_df = dim_jobs_facts_df.rename(columns = {"mit_estimated_salary":"mit_estimated_baseline_salary", "total_population":"county_avg_total_population"})
-dim_jobs_facts_df  = dim_jobs_facts_df.drop(columns = ["city","state","state_short","job_title", "job_family","occupational_area"])
+facts_columns = facts_df.columns.tolist()
+dim_jobs_columns = dim_jobs_df.columns.tolist()
+
+# Find the columns that are in both DataFrames
+common_columns = list(set(facts_columns).intersection(dim_jobs_columns))
+
+dim_jobs_facts_df = dim_jobs_df[common_columns].copy()
 
 facts_df = pd.concat([facts_df, dim_jobs_facts_df]).copy()
 
-print(facts_df.head())
-
-
-
-
-
 ## now making dim_jobs table
 
-dim_jobs_df1 = dim_jobs_df[["job_id","city","state","state_short","job_title","job_family","occupational_area"]].copy()
+dim_jobs_df1 = dim_jobs_df[["job_id","city","state","state_short_x","job_title","job_family","occupational_area"]].copy()
+dim_jobs_df1 = dim_jobs_df1.rename(columns={"state_short_x":"state_short"})
 
 
 levels_dim_jobs_df = levels_df[["job_id","company_info_name","company_info_icon","state","state_short","city","title","job_family","occupational_area"]].copy()
@@ -680,6 +675,8 @@ print()
 
 ## create schema
 
+print(facts_df.columns)
+
 # Column order for the dim_jobs table
 dim_jobs_columns = [
     'job_id', 'company_name', 'company_icon', 'state', 'state_short',
@@ -688,22 +685,26 @@ dim_jobs_columns = [
 
 # Column order for the facts_jobs table
 facts_jobs_columns = [
-    'job_id', 'dma_id', 'city_town_geo_id', 'county_geo_id', 'salary',
+    'job_id', 'dma_id', 'location_id', 'salary',
     'mit_estimated_baseline_salary', 'years_of_experience', 'years_at_level',
-    'county_avg_total_population', 'minimum_wage', 'tipped_wage', 'rank',
-    'tv_homes', 'percent_of_united_states'
+    'minimum_wage', 'tipped_wage', 'rank',
+    'tv_homes', 'percent_of_united_states','total_population', "total_population_density" ,'total_land_area', 'total_housing_units',
+       'total_occupied_housing_units'
 ]
+
 
 # Column order for the dim_location table
 dim_location_columns = [
-    'city_town_geo_id', 'county_geo_id', 'state', 'state_short', 'county',
-    'location_name', 'type_of_place'
+    'location_id', 'state', 'state_short', 'county',
+    'city', 'latitude', 'longitude'
 ]
+
 
 # Column order for the dim_dma table
 dim_dma_columns = [
     'dma_id', 'location_name'
 ]
+
 
 # Assuming final_dims_jobs_df, facts_df, dma_df, and dim_location_df are your DataFrames
 final_dims_jobs_df = final_dims_jobs_df[dim_jobs_columns]
@@ -738,3 +739,9 @@ facts_df.to_csv("facts_jobs.csv", index=False)
 final_dims_jobs_df.to_csv("dim_jobs.csv", index=False)
 
 print("ETL process is complete.")
+
+
+
+
+
+
