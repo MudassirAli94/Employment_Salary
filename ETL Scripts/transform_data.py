@@ -1,12 +1,10 @@
 import numpy as np
 import pandas as pd
-from fuzzywuzzy import process
 import re
 from gcp_functions import read_csv_from_gcs, insert_dataframe_to_bigquery, create_bigquery_schema
 import json
 import uuid
-from google.oauth2 import service_account
-from google.cloud import bigquery
+
 
 
 ## GCP configuration
@@ -98,19 +96,10 @@ levels_df = levels_df.drop_duplicates(subset = ["job_id"])
 for n in ["salary","dma_id"]:
     levels_df[n] = levels_df[n].astype(int)
 
-#assert levels_df.company_info_name.isnull().sum() == 0, "company_info_name column has missing values"
-
-def find_similar_names(name_to_check, all_names, threshold=90):
-    similar_names = process.extract(name_to_check, all_names, limit=None)
-    return [name for name, score in similar_names if score >= threshold]
 
 unique_names = levels_df['company_info_name'].unique()
 
-# for name in unique_names:
-#     similar_names = find_similar_names(name, [n for n in unique_names if n != name])
-#     if similar_names:
-#         print(f"Names similar to '{name}': {similar_names}")
-## INSERT DATA INGESTION TO DATAWARE HOUSE CODE HERE
+levels_df["city"] = levels_df["city"].apply(lambda i: i.replace("West McLean","McLean"))
 
 for n in ["years_at_company","years_at_level","years_of_experience"]:
     levels_df[n] = levels_df[n].apply(lambda i: str(i).replace("0-1","0"))
@@ -155,8 +144,6 @@ living_wage_df_newark = living_wage_df[living_wage_df["county"] == "Newark"]
 living_wage_df_newark["county"] = "Jersey"
 living_wage_df = pd.concat([living_wage_df, living_wage_df_newark])
 living_wage_df = living_wage_df.sort_values(by = ["state","county"])
-
-## INSERT DATA INGESTION TO DATAWARE HOUSE CODE HERE
 
 #print(living_wage_df.head())
 
@@ -346,9 +333,10 @@ gaz_df = gaz_df[~gaz_df['county'].str.strip().str.isdigit()]
 gaz_df = gaz_df[gaz_df['county'].str.lower() != 'nan']
 gaz_df['county'] = gaz_df['county'].str.strip()
 gaz_df["county"] = gaz_df["county"].apply(lambda i: i.replace(" County",""))
+gaz_df.loc[(gaz_df['state'] == 'District of Columbia') & (gaz_df['name'] == 'Washington'), 'county'] = "District of Columbia"
 
 gaz_df = gaz_df[['state','state_short','county','name','type_of_place','geo_id','ansi_code']]
-gaz_df = gaz_df.rename(columns = {"name":"location_name"})
+gaz_df = gaz_df.rename(columns = {"name":"city"})
 
 
 ## INSERT DATA INGESTION TO DATAWARE HOUSE CODE HERE
@@ -448,15 +436,19 @@ print(df_job_data)
 levels_facts_df = levels_df[["job_id", "dma_id", "state", "state_short","city","salary","years_of_experience","years_at_company","years_at_level", "occupational_area"]].copy()
 minimum_facts_df = minimum_wage_df[["state","minimum_wage","tipped_wage"]].copy()
 county_facts_df = census_df[["county_geo_id","state","state_short","county","total_population"]].copy()
-county_facts_df = county_facts_df.merge(gaz_df[["county","state_short","location_name","type_of_place"]], on = ["county","state_short"], how = "left")
-county_facts_df = county_facts_df.rename(columns = {"location_name":"city"})
+county_facts_df = county_facts_df.merge(gaz_df[["county","state_short","city","type_of_place"]], on = ["county","state_short"], how = "left")
 print(county_facts_df.head())
 
-living_wage_fact_df = living_wage_df.merge(gaz_df[["county","state_short","location_name","type_of_place"]], on = ["county","state_short"], how = "left")
-levels_facts_df = levels_facts_df.merge(living_wage_fact_df[["occupational_area","location_name", "state_short","mit_estimated_salary"]]\
-                                        .rename(columns={"location_name":"city"}), on = ["occupational_area","city","state_short"], how = "left")
+living_wage_fact_df = living_wage_df.merge(gaz_df[["county","state_short","city","type_of_place"]], on = ["county","state_short"], how = "left")
+levels_facts_df = levels_facts_df.merge(living_wage_fact_df[["occupational_area","city", "state_short","mit_estimated_salary"]]\
+                                        , on = ["occupational_area","city","state_short"], how = "left")
 levels_facts_df.drop_duplicates(subset = ["job_id"], inplace=True)
 levels_facts_df = levels_facts_df.rename(columns = {"mit_estimated_salary":"mit_estimated_baseline_salary"})
+
+##merge with gaz_df to get city_town_geo_id
+levels_facts_df = levels_facts_df.merge(gaz_df[["state","city","geo_id"]], on = ["state","city"], how = "left")
+levels_facts_df = levels_facts_df.rename(columns = {"geo_id":"city_town_geo_id"})
+
 ## merge with dma_df
 levels_facts_df = levels_facts_df.merge(dma_df[["dma_id","rank","tv_homes","percent_of_united_states"]], on = "dma_id", how = "left")
 ## merge with minimum_wage_df
@@ -474,7 +466,10 @@ levels_facts_df = levels_facts_df.drop(columns=["state","state_short","city","oc
 levels_facts_df = levels_facts_df.drop_duplicates(subset = ["job_id"])
 
 levels_facts_df = levels_facts_df.drop_duplicates(subset = ["job_id"])
+
 facts_df = levels_facts_df.copy()
+
+
 
 ## get dma dimension
 
@@ -483,9 +478,9 @@ print(dim_dma_df.head())
 
 ## get dim location dimension
 
-dim_location_df = gaz_df[["geo_id","state","state_short","county","location_name","type_of_place"]].copy()
+dim_location_df = gaz_df[["geo_id","state","state_short","county","city","type_of_place"]].copy()
 dim_location_df = dim_location_df.merge(census_df[["county_geo_id","state","county"]], on = ["county","state"], how = "left")
-dim_location_df = dim_location_df.rename(columns = {"geo_id":"city_town_geo_id"})
+dim_location_df = dim_location_df.rename(columns = {"geo_id":"city_town_geo_id", "city":"location_name"})
 
 ## get dim jobs dimension
 
@@ -639,6 +634,9 @@ dim_jobs_df = dim_jobs_df.merge(minimum_wage_df[["state","minimum_wage","tipped_
 dim_jobs_df = dim_jobs_df.merge(dma_df.rename(columns = {"location_name":"city"}), on = "city", how = "left")
 ## get county data for dim_jobs_df
 dim_jobs_df = dim_jobs_df.merge(county_facts_df[["state","county","city","county_geo_id","total_population"]], on = ["city","state"], how = "left")
+## get city_town_geo_id for dim_jobs_df
+dim_jobs_df = dim_jobs_df.merge(gaz_df[["state","city","geo_id"]], on = ["state","city"], how = "left")
+dim_jobs_df = dim_jobs_df.rename(columns = {"geo_id":"city_town_geo_id"})
 ## get average total_population for dim_jobs_df because many counties roll up to one city
 mean_population_df = dim_jobs_df.groupby("job_id")["total_population"].mean().reset_index()
 dim_jobs_df = dim_jobs_df.drop(columns=["total_population"])
@@ -658,6 +656,11 @@ dim_jobs_facts_df  = dim_jobs_facts_df.drop(columns = ["city","state","state_sho
 
 facts_df = pd.concat([facts_df, dim_jobs_facts_df]).copy()
 
+print(facts_df.head())
+
+
+
+
 
 ## now making dim_jobs table
 
@@ -669,17 +672,44 @@ levels_dim_jobs_df = levels_dim_jobs_df.rename(columns={"title":"job_title","com
 
 final_dims_jobs_df = pd.concat([dim_jobs_df1, levels_dim_jobs_df]).copy()
 
-
-print()
-
-print("Are all our jobs in the dim_job table in our facts table?",final_dims_jobs_df.job_id.isin(facts_df.job_id).sum() == final_dims_jobs_df.shape[0])
-print()
-print("Are all our jobs in the facts table in our dim_job_table?",facts_df.job_id.isin(final_dims_jobs_df.job_id).sum() == facts_df.shape[0])
+assert final_dims_jobs_df.job_id.isin(facts_df.job_id).sum() == final_dims_jobs_df.shape[0], "All jobs in dim_job table are not in facts table"
+assert facts_df.job_id.isin(final_dims_jobs_df.job_id).sum() == facts_df.shape[0], "All jobs in facts table are not in dim_job table"
 print()
 
 ## Ingest tables into datawarehouse
 
 ## create schema
+
+# Column order for the dim_jobs table
+dim_jobs_columns = [
+    'job_id', 'company_name', 'company_icon', 'state', 'state_short',
+    'city', 'job_title', 'job_family', 'occupational_area'
+]
+
+# Column order for the facts_jobs table
+facts_jobs_columns = [
+    'job_id', 'dma_id', 'city_town_geo_id', 'county_geo_id', 'salary',
+    'mit_estimated_baseline_salary', 'years_of_experience', 'years_at_level',
+    'county_avg_total_population', 'minimum_wage', 'tipped_wage', 'rank',
+    'tv_homes', 'percent_of_united_states'
+]
+
+# Column order for the dim_location table
+dim_location_columns = [
+    'city_town_geo_id', 'county_geo_id', 'state', 'state_short', 'county',
+    'location_name', 'type_of_place'
+]
+
+# Column order for the dim_dma table
+dim_dma_columns = [
+    'dma_id', 'location_name'
+]
+
+# Assuming final_dims_jobs_df, facts_df, dma_df, and dim_location_df are your DataFrames
+final_dims_jobs_df = final_dims_jobs_df[dim_jobs_columns]
+facts_df = facts_df[facts_jobs_columns]
+dim_location_df = dim_location_df[dim_location_columns]
+dma_df = dma_df[dim_dma_columns]
 
 sql_file_path = "dim_modeling.sql"
 
@@ -688,20 +718,23 @@ create_bigquery_schema(sql_file_path=sql_file_path)
 ## ingest tables into schema
 
 insert_dataframe_to_bigquery(df=final_dims_jobs_df,
-                             dataset_table_name='dim_jobs',
-                             project_id=PROJECT_ID)
+                             dataset_table_name='living_wages_project.dim_jobs',
+                             project_id=PROJECT_ID,
+                             if_exists='replace')
 insert_dataframe_to_bigquery(df=dim_dma_df,
-                             dataset_table_name='dim_dma',
-                             project_id=PROJECT_ID)
+                             dataset_table_name='living_wages_project.dim_dma',
+                             project_id=PROJECT_ID,
+                             if_exists='replace')
 insert_dataframe_to_bigquery(df=dim_location_df,
-                             dataset_table_name='dim_location',
-                             project_id=PROJECT_ID)
+                             dataset_table_name='living_wages_project.dim_location',
+                             project_id=PROJECT_ID,
+                             if_exists='replace')
 insert_dataframe_to_bigquery(df=facts_df,
-                             dataset_table_name='facts_jobs',
-                             project_id=PROJECT_ID)
+                             dataset_table_name='living_wages_project.facts_jobs',
+                             project_id=PROJECT_ID,
+                             if_exists='replace')
 
+facts_df.to_csv("facts_jobs.csv", index=False)
+final_dims_jobs_df.to_csv("dim_jobs.csv", index=False)
 
-
-
-
-
+print("ETL process is complete.")
