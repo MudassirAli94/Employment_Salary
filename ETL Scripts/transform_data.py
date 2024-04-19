@@ -143,11 +143,13 @@ unique_names = levels_df['company_info_name'].unique()
 #         print(f"Names similar to '{name}': {similar_names}")
 ## INSERT DATA INGESTION TO DATAWARE HOUSE CODE HERE
 
-for n in ["years_at_company","years_at_level"]:
+for n in ["years_at_company","years_at_level","years_of_experience"]:
     levels_df[n] = levels_df[n].apply(lambda i: str(i).replace("0-1","0"))
     levels_df[n] = levels_df[n].apply(lambda i: str(i).replace("2-4", "3"))
     levels_df[n] = levels_df[n].apply(lambda i: str(i).replace("5-10", "7"))
     levels_df[n] = levels_df[n].apply(lambda i: str(i).replace("+",""))
+    levels_df[n] = levels_df[n].apply(lambda i: str(i).replace("10-May", ""))
+    levels_df[n] = levels_df[n].apply(lambda i: str(i).replace("4-Feb", ""))
     levels_df = levels_df[~levels_df[n].str.contains('-', na=False)]
     levels_df[n] = levels_df[n].astype(float)
 
@@ -502,10 +504,8 @@ levels_facts_df["county_avg_total_population"] = round(levels_facts_df["county_a
 levels_facts_df = levels_facts_df.drop(columns=["state","state_short","city","occupational_area", "county"])
 levels_facts_df = levels_facts_df.drop_duplicates(subset = ["job_id"])
 
+levels_facts_df = levels_facts_df.drop_duplicates(subset = ["job_id"])
 facts_df = levels_facts_df.copy()
-
-print(levels_facts_df.head(100))
-print(levels_facts_df.info())
 
 ## get dma dimension
 
@@ -653,11 +653,6 @@ def match_job(title):
 
     return "Other", "Other"  # Fallback if no match is found
 
-# Test the function with example titles
-job_titles = ["Head of Digital Product and Channels", "Executive Director"]
-for job in job_titles:
-    print(f"Job Title: {job}, Category: {match_job(job)}")
-
 
 # Apply the final customer service specific matching function to the DataFrame
 dim_jobs_df['job_family'], dim_jobs_df['occupational_area'] = zip(*dim_jobs_df['job_title'].apply(match_job))
@@ -691,26 +686,33 @@ dim_jobs_df = dim_jobs_df.drop_duplicates(subset = ["job_id"])
 ## ingesting dim_jobs_facts to our facts_df
 dim_jobs_facts_df = dim_jobs_df[['job_id','city','state','state_short','job_title','job_family','occupational_area','salary','minimum_wage','tipped_wage','dma_id','total_population','mit_estimated_salary',"rank","tv_homes","percent_of_united_states"]].copy()
 dim_jobs_facts_df = dim_jobs_facts_df.rename(columns = {"mit_estimated_salary":"mit_estimated_baseline_salary", "total_population":"county_avg_total_population"})
+dim_jobs_facts_df  = dim_jobs_facts_df.drop(columns = ["city","state","state_short","job_title", "job_family","occupational_area"])
 
 facts_df = pd.concat([facts_df, dim_jobs_facts_df]).copy()
-facts_df = facts_df.drop_duplicates(subset = ["job_id"])
+
 
 ## now making dim_jobs table
 
 dim_jobs_df1 = dim_jobs_df[["job_id","city","state","state_short","job_title","job_family","occupational_area"]].copy()
-print(levels_df.columns)
+
 
 levels_dim_jobs_df = levels_df[["job_id","company_info_name","company_info_icon","state","state_short","city","title","job_family","occupational_area"]].copy()
-levels_dim_jobs_df = levels_dim_jobs_df.rename(columns = {"title":"job_title","company_info_name":"company_name","company_info_icon":"company_icon"})
+levels_dim_jobs_df = levels_dim_jobs_df.rename(columns={"title":"job_title","company_info_name":"company_name","company_info_icon":"company_icon"})
 
 final_dims_jobs_df = pd.concat([dim_jobs_df1, levels_dim_jobs_df]).copy()
 
-print(final_dims_jobs_df.head())
 
-print(levels_dim_jobs_df.job_id.isin(facts_df.job_id).sum() == levels_dim_jobs_df.shape[0])
-print(facts_df.job_id.isin(levels_dim_jobs_df.job_id).sum() == facts_df.shape[0])
-print(facts_df.shape)
-print(facts_df.job_id.isin(levels_dim_jobs_df.job_id).sum())
+print()
+
+print("Are all our jobs in the dim_job table in our facts table?",final_dims_jobs_df.job_id.isin(facts_df.job_id).sum() == final_dims_jobs_df.shape[0])
+print()
+print("Are all our jobs in the facts table in our dim_job_table?",facts_df.job_id.isin(final_dims_jobs_df.job_id).sum() == facts_df.shape[0])
+print()
+
+final_dims_jobs_df.to_csv("dims_jobs.csv", index=False)
+facts_df.to_csv("facts.csv", index=False)
+dim_dma_df.to_csv("dim_dma.csv", index=False)
+dim_location_df.to_csv("dim_location.csv", index=False)
 
 
 
