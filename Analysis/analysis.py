@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from gcp_functions import read_table_from_bq
+from gcp_functions import read_table_from_bq, insert_dataframe_to_bigquery
 import json
 from catboost import CatBoostRegressor
 pd.set_option('display.max_columns', None)
@@ -471,42 +471,50 @@ model.fit(X, y, verbose=False)
 # import sys
 # sys.exit(1)
 
-# Bootstrap parameters
-# n_bootstraps = 50
-# alpha = 0.05
-# lower_quantile = alpha / 2
-# upper_quantile = 1 - alpha / 2
-#
-# # Store predictions from each bootstrap
-# bootstrap_predictions = []
-#
-# for _ in tqdm(range(n_bootstraps), desc="Calculating Bootstraps"):
-#     # Sample with replacement from X and y
-#     indices = np.random.choice(range(X.shape[0]), size=X.shape[0], replace=True)
-#     X_sample = X.iloc[indices]
-#     y_sample = y.iloc[indices]
-#
-#     # Fit the model on the bootstrap sample
-#     model.fit(X_sample, y_sample, verbose=False)
-#
-#     # Predict on the original dataset
-#     predictions = model.predict(X)
-#     bootstrap_predictions.append(predictions)
-#
-# # Calculate quantiles for the confidence interval
-# bootstrap_predictions = np.array(bootstrap_predictions)
-# lower_bounds = np.percentile(bootstrap_predictions, lower_quantile * 100, axis=0)
-# upper_bounds = np.percentile(bootstrap_predictions, upper_quantile * 100, axis=0)
-#
-# # Create DataFrame
-# X_predicted_df = X.reset_index()
-# X_predicted_df["predicted_salary"] = model.predict(X)
-# X_predicted_df["predicted_salary"] = X_predicted_df["predicted_salary"].apply(np.floor)
-# X_predicted_df["confidence_interval_lower_bound"] = lower_bounds
-# X_predicted_df["confidence_interval_upper_bound"] = upper_bounds
-#
-# df = df.merge(X_predicted_df[["job_id", "predicted_salary" ,"confidence_interval_lower_bound","confidence_interval_upper_bound"]], on="job_id")
-# df.to_csv("predicted_salaries.csv", index=False)
+#Bootstrap parameters
+n_bootstraps = 50
+alpha = 0.05
+lower_quantile = alpha/2
+upper_quantile = 1 - (alpha/2)
+
+# Store predictions from each bootstrap
+bootstrap_predictions = []
+
+for _ in tqdm(range(n_bootstraps), desc="Calculating Bootstraps"):
+    # Sample with replacement from X and y
+    indices = np.random.choice(range(X.shape[0]), size=X.shape[0], replace=True)
+    X_sample = X.iloc[indices]
+    y_sample = y.iloc[indices]
+
+    # Fit the model on the bootstrap sample
+    model.fit(X_sample, y_sample, verbose=False)
+
+    # Predict on the original dataset
+    predictions = model.predict(X)
+    bootstrap_predictions.append(predictions)
+
+# Calculate quantiles for the confidence interval
+bootstrap_predictions = np.array(bootstrap_predictions)
+lower_bounds = np.percentile(bootstrap_predictions, lower_quantile * 100, axis=0)
+upper_bounds = np.percentile(bootstrap_predictions, upper_quantile * 100, axis=0)
+
+# Create DataFrame
+X_predicted_df = X.reset_index()
+X_predicted_df["predicted_salary"] = model.predict(X)
+X_predicted_df["predicted_salary"] = X_predicted_df["predicted_salary"].apply(np.floor)
+X_predicted_df["confidence_interval_lower_bound"] = lower_bounds
+X_predicted_df["confidence_interval_upper_bound"] = upper_bounds
+
+new_facts_df = read_table_from_bq(facts_query, project_id=PROJECT_ID)
+
+new_facts_df = new_facts_df.merge(X_predicted_df[["job_id", "predicted_salary",
+                                      "confidence_interval_lower_bound","confidence_interval_upper_bound"]], on="job_id")
+
+insert_dataframe_to_bigquery(df=new_facts_df,
+                             dataset_table_name='living_wages_project.facts_jobs_salary',
+                             project_id=PROJECT_ID,
+                             if_exists='replace')
+
 
 feature_importances = model.get_feature_importance()
 
