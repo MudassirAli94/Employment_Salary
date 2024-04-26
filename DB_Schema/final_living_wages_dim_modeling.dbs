@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<project name="living_wages_project" id="GoogleBigQuery-c50" database="GoogleBigQuery" >
+	<schema name="dimensional_modeling_term_project" >
+		<table name="dim_dma" prior="Tbl" >
+			<column name="dma_id" type="int64" jt="4" mandatory="y" />
+			<column name="location_name" type="string" jt="12" >
+				<comment><![CDATA[name of location]]></comment>
+			</column>
+			<index name="pk_dim_dma" unique="PRIMARY_KEY" >
+				<column name="dma_id" />
+			</index>
+		</table>
+		<table name="dim_location" prior="dim_location_city_town" >
+			<comment><![CDATA[dimensional table on the city/town level with DMA data]]></comment>
+			<column name="location_id" prior="primary_key" type="string" jt="12" mandatory="y" />
+			<column name="state" type="string" jt="12" >
+				<comment><![CDATA[state in the USA]]></comment>
+			</column>
+			<column name="state_short" type="string" jt="12" >
+				<comment><![CDATA[two letter abbreviation for state]]></comment>
+			</column>
+			<column name="county" type="string" jt="12" >
+				<comment><![CDATA[county in the state]]></comment>
+			</column>
+			<column name="city" type="string" jt="12" >
+				<comment><![CDATA[city in the county]]></comment>
+			</column>
+			<column name="latitude" type="numeric" jt="2" />
+			<column name="longitude" type="numeric" jt="2" />
+			<index name="pk_dim_location" unique="PRIMARY_KEY" >
+				<column name="location_id" />
+			</index>
+		</table>
+		<table name="facts_jobs" prior="facts" >
+			<column name="job_id" type="string" jt="12" mandatory="y" >
+				<comment><![CDATA[foreign key for dim_employee table]]></comment>
+			</column>
+			<column name="dma_id" type="int64" jt="4" >
+				<comment><![CDATA[foreign key to dma table]]></comment>
+			</column>
+			<column name="location_id" type="string" jt="12" />
+			<column name="mit_estimated_baseline_salary" prior="mit_estimated_salary" type="numeric" jt="2" />
+			<column name="years_of_experience" type="int64" jt="4" >
+				<comment><![CDATA[number of years of experience the person has for the job]]></comment>
+			</column>
+			<column name="years_at_level" type="int64" jt="4" >
+				<comment><![CDATA[number of years the person has at the level]]></comment>
+			</column>
+			<column name="minimum_wage" type="numeric" jt="2" >
+				<comment><![CDATA[minimum wage per state]]></comment>
+			</column>
+			<column name="tipped_wage" type="numeric" jt="2" />
+			<column name="rank" type="int64" jt="4" >
+				<comment><![CDATA[rank of DMA]]></comment>
+			</column>
+			<column name="tv_homes" type="int64" jt="4" >
+				<comment><![CDATA[number of televisions per DMA data]]></comment>
+			</column>
+			<column name="percent_of_united_states" type="numeric" jt="2" >
+				<comment><![CDATA[DMA data]]></comment>
+			</column>
+			<column name="total_population" prior="county_avg_total_population" type="int64" jt="4" >
+				<comment><![CDATA[total population of the county]]></comment>
+			</column>
+			<column name="total_population_density" type="int64" jt="4" />
+			<column name="total_land_area" type="int64" jt="4" >
+				<comment><![CDATA[land area in sq miles]]></comment>
+			</column>
+			<column name="total_housing_units" type="int64" jt="4" />
+			<column name="total_occupied_housing_units" type="int64" jt="4" />
+			<index name="pk_facts" unique="PRIMARY_KEY" >
+				<column name="job_id" />
+			</index>
+			<fk name="job_id" to_schema="dimensional_modeling_term_project" to_table="facts_jobs_salary" >
+				<fk_column name="job_id" pk="job_id" />
+			</fk>
+			<fk name="dma_id" to_schema="dimensional_modeling_term_project" to_table="dim_dma" >
+				<fk_column name="dma_id" pk="dma_id" />
+			</fk>
+			<fk name="location_id" to_schema="dimensional_modeling_term_project" to_table="dim_location" >
+				<fk_column name="location_id" pk="location_id" />
+			</fk>
+		</table>
+		<table name="facts_jobs_salary" prior="dim_jobs" >
+			<comment><![CDATA[dimensional modeling for employee level data]]></comment>
+			<column name="job_id" type="string" jt="12" mandatory="y" >
+				<comment><![CDATA[primary key]]></comment>
+			</column>
+			<column name="company_name" type="string" jt="12" />
+			<column name="company_icon" type="string" jt="12" />
+			<column name="state" type="string" jt="12" >
+				<comment><![CDATA[state location of job]]></comment>
+			</column>
+			<column name="state_short" type="string" jt="12" >
+				<comment><![CDATA[two letter abbreviation of state location of job]]></comment>
+			</column>
+			<column name="city" type="string" jt="12" />
+			<column name="job_title" type="string" jt="12" />
+			<column name="job_family" type="string" jt="12" />
+			<column name="occupational_area" type="string" jt="12" />
+			<column name="salary" type="int64" jt="4" />
+			<index name="pk_dim_employee" unique="PRIMARY_KEY" >
+				<column name="job_id" />
+			</index>
+		</table>
+	</schema>
+	<layout name="Default Layout" id="Layout-17f9" show_relation="columns" >
+		<entity schema="dimensional_modeling_term_project" name="dim_dma" color="3986C1" x="608" y="752" />
+		<entity schema="dimensional_modeling_term_project" name="dim_location" color="C1D8EE" x="944" y="352" />
+		<entity schema="dimensional_modeling_term_project" name="facts_jobs" color="C1D8EE" x="592" y="336" />
+		<entity schema="dimensional_modeling_term_project" name="facts_jobs_salary" color="C1D8EE" x="288" y="336" />
+		<callout x="48" y="48" pointer="Round" >
+			<comment><![CDATA[This is a layout - a diagram with tools.
+- Right-click the layout to create new tables. 
+- Double-click table headers to edit. 
+- For a better understanding of the schema, create multiple layouts.
+- Save the design to the model file, and deploy from 'Schema / Create into the database'.]]></comment>
+		</callout>
+	</layout>
+</project>
