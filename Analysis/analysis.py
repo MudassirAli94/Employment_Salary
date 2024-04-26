@@ -510,6 +510,8 @@ new_facts_df = read_table_from_bq(facts_query, project_id=PROJECT_ID)
 new_facts_df = new_facts_df.merge(X_predicted_df[["job_id", "predicted_salary",
                                       "confidence_interval_lower_bound","confidence_interval_upper_bound"]], on="job_id")
 
+new_facts_df.drop_duplicates(subset=["job_id"], inplace=True)
+
 insert_dataframe_to_bigquery(df=new_facts_df,
                              dataset_table_name='living_wages_project.facts_jobs_salary',
                              project_id=PROJECT_ID,
