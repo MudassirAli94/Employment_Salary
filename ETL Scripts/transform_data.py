@@ -348,8 +348,6 @@ print(census_df.head())
 
 dma_df = read_csv_from_gcs(bucket_name=YOUR_BUCKET_NAME, file_name="2024-04-15/dma_data_20240415170025.csv")
 
-dma_df = pd.read_csv("dma.csv")
-
 
 
 dma_df = dma_df.rename(columns = {"Designated Market Area (DMA)":"location_name","Rank":"rank","TV Homes":"tv_homes","% of US":"percent_of_united_states","DMA Code":"dma_id"})
@@ -658,11 +656,12 @@ facts_df = pd.concat([facts_df, dim_jobs_facts_df]).copy()
 
 ## now making dim_jobs table
 
-dim_jobs_df1 = dim_jobs_df[["job_id","city","state","state_short_x","job_title","job_family","occupational_area"]].copy()
+dim_jobs_df1 = dim_jobs_df[["job_id","city","state","state_short_x","job_title","job_family","occupational_area","salary"]].copy()
 dim_jobs_df1 = dim_jobs_df1.rename(columns={"state_short_x":"state_short"})
 
 
-levels_dim_jobs_df = levels_df[["job_id","company_info_name","company_info_icon","state","state_short","city","title","job_family","occupational_area"]].copy()
+levels_dim_jobs_df = levels_df[["job_id","company_info_name","company_info_icon","state","state_short","city","title",
+                                "job_family","occupational_area","salary"]].copy()
 levels_dim_jobs_df = levels_dim_jobs_df.rename(columns={"title":"job_title","company_info_name":"company_name","company_info_icon":"company_icon"})
 
 final_dims_jobs_df = pd.concat([dim_jobs_df1, levels_dim_jobs_df]).copy()
@@ -680,12 +679,12 @@ print(facts_df.columns)
 # Column order for the dim_jobs table
 dim_jobs_columns = [
     'job_id', 'company_name', 'company_icon', 'state', 'state_short',
-    'city', 'job_title', 'job_family', 'occupational_area'
+    'city', 'job_title', 'job_family', 'occupational_area', "salary"
 ]
 
 # Column order for the facts_jobs table
 facts_jobs_columns = [
-    'job_id', 'dma_id', 'location_id', 'salary',
+    'job_id', 'dma_id', 'location_id',
     'mit_estimated_baseline_salary', 'years_of_experience', 'years_at_level',
     'minimum_wage', 'tipped_wage', 'rank',
     'tv_homes', 'percent_of_united_states','total_population', "total_population_density" ,'total_land_area', 'total_housing_units',
@@ -707,7 +706,7 @@ dim_dma_columns = [
 
 
 # Assuming final_dims_jobs_df, facts_df, dma_df, and dim_location_df are your DataFrames
-final_dims_jobs_df = final_dims_jobs_df[dim_jobs_columns]
+facts_jobs_salary_df = final_dims_jobs_df[dim_jobs_columns]
 facts_df = facts_df[facts_jobs_columns]
 dim_location_df = dim_location_df[dim_location_columns]
 dma_df = dma_df[dim_dma_columns]
@@ -718,8 +717,8 @@ create_bigquery_schema(sql_file_path=sql_file_path)
 
 ## ingest tables into schema
 
-insert_dataframe_to_bigquery(df=final_dims_jobs_df,
-                             dataset_table_name='living_wages_project.dim_jobs',
+insert_dataframe_to_bigquery(df=facts_jobs_salary_df,
+                             dataset_table_name='living_wages_project.facts_jobs_salary',
                              project_id=PROJECT_ID,
                              if_exists='replace')
 insert_dataframe_to_bigquery(df=dim_dma_df,
