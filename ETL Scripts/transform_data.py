@@ -711,7 +711,7 @@ facts_df = facts_df[facts_jobs_columns]
 dim_location_df = dim_location_df[dim_location_columns]
 dma_df = dma_df[dim_dma_columns]
 
-sql_file_path = "dim_modeling.sql"
+sql_file_path = "final_living_wages_schema.sql"
 
 create_bigquery_schema(sql_file_path=sql_file_path)
 
