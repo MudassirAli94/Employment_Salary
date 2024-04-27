@@ -1,11 +1,16 @@
 import numpy as np
 import pandas as pd
 import re
-from gcp_functions import read_csv_from_gcs, insert_dataframe_to_bigquery, create_bigquery_schema
+from gcp_functions import (read_csv_from_gcs, insert_dataframe_to_bigquery,
+                           create_bigquery_schema)
 import json
 import uuid
 from uszipcode import SearchEngine
 pd.set_option('display.max_columns', None)
+
+import warnings
+
+warnings.filterwarnings("ignore")
 
 
 
@@ -16,6 +21,10 @@ with open('config.json') as config_file:
 
 YOUR_BUCKET_NAME = config["bucket_name"]
 PROJECT_ID = config["project_id"]
+
+from google.cloud import storage
+from io import StringIO
+
 
 ## clean and transform levels_fyi_data
 
@@ -34,7 +43,9 @@ state_abbreviations = {
     "District of Columbia": "DC", "Puerto Rico": "PR", "Remote":"Remote"
 }
 
-levels_df = read_csv_from_gcs(bucket_name=YOUR_BUCKET_NAME, file_name="2024-04-15/levels_fyi_20240415170012.csv")
+levels_df = read_csv_from_gcs(project_id=PROJECT_ID,
+                              bucket_name=YOUR_BUCKET_NAME,
+                              file_name="2024-04-15/levels_fyi_20240415170012.csv")
 
 levels_df['offerDate'] = levels_df['offerDate'].str.slice(start=0, stop=24)
 # Now, convert the 'offerDate' column to datetime without specifying a format
@@ -118,9 +129,8 @@ print(levels_df.head())
 
 ## clean and transform mit living wages data
 
-living_wage_df = read_csv_from_gcs(bucket_name=YOUR_BUCKET_NAME, file_name="2024-04-15/mit_living_wages_20240415170017.csv")
-
-living_wage_df = pd.read_csv("../mit_living_wages.csv")
+living_wage_df = read_csv_from_gcs(project_id=PROJECT_ID,
+bucket_name=YOUR_BUCKET_NAME, file_name="2024-04-15/mit_living_wages_20240415170017.csv")
 
 living_wage_df.typicalAnnualSalary = living_wage_df.typicalAnnualSalary.apply(lambda i: str(i).replace("$","")).apply(lambda i: str(i).replace(",",""))
 living_wage_df.typicalAnnualSalary = living_wage_df.typicalAnnualSalary.astype(int)
@@ -198,9 +208,9 @@ living_wage_df = living_wage_df.rename(columns = {"salary":"mit_estimated_salary
 
 ## clean and transform minimum wage data
 
-minimum_wage_df = read_csv_from_gcs(bucket_name=YOUR_BUCKET_NAME, file_name="2024-04-15/minimum_wage_per_state_20240415170019.csv")
-
-minimum_wage_df = pd.read_csv("../minimum_wage_per_state.csv")
+minimum_wage_df = read_csv_from_gcs(project_id=PROJECT_ID,
+                                    bucket_name=YOUR_BUCKET_NAME,
+                                    file_name="2024-04-15/minimum_wage_per_state_20240415170019.csv")
 
 cols_list = minimum_wage_df.columns.tolist()
 cols_list = [col.replace(" ", "_").lower() for col in cols_list]
@@ -223,7 +233,8 @@ print(minimum_wage_df.head())
 
 ## clean and transform start up jobs data
 
-start_ups_df = read_csv_from_gcs(bucket_name=YOUR_BUCKET_NAME, file_name="2024-04-15/startups_jobs_20240415170023.csv")
+start_ups_df = read_csv_from_gcs(project_id=PROJECT_ID,
+bucket_name=YOUR_BUCKET_NAME, file_name="2024-04-15/startups_jobs_20240415170023.csv")
 
 
 start_ups_df["num_employees"] = start_ups_df["num_employees"].apply(lambda i: str(i).split(" ")[0])\
@@ -346,7 +357,8 @@ print(census_df.head())
 
 ## transform DMA data
 
-dma_df = read_csv_from_gcs(bucket_name=YOUR_BUCKET_NAME, file_name="2024-04-15/dma_data_20240415170025.csv")
+dma_df = read_csv_from_gcs(project_id=PROJECT_ID,
+bucket_name=YOUR_BUCKET_NAME, file_name="2024-04-15/dma_data_20240415170025.csv")
 
 
 
@@ -378,7 +390,8 @@ print(dma_df.head())
 
 ## transform efinancial data
 
-efinancial_df = read_csv_from_gcs(bucket_name=YOUR_BUCKET_NAME, file_name="2024-04-15/efinancial_jobs_20240415170055.csv")
+efinancial_df = read_csv_from_gcs(project_id=PROJECT_ID,
+bucket_name=YOUR_BUCKET_NAME, file_name="2024-04-15/efinancial_jobs_20240415170055.csv")
 
 # Define a function to remove string values from salary
 def extract_salary(salary_str):
@@ -711,7 +724,7 @@ facts_df = facts_df[facts_jobs_columns]
 dim_location_df = dim_location_df[dim_location_columns]
 dma_df = dma_df[dim_dma_columns]
 
-sql_file_path = "final_living_wages_schema.sql"
+sql_file_path = "/Users/mudassirali/PycharmProjects/CIS9440Group9/DB_Schema/final_living_wages_schema.sql"
 
 create_bigquery_schema(sql_file_path=sql_file_path)
 
