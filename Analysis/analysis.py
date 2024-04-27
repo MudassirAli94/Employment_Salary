@@ -472,7 +472,7 @@ model.fit(X, y, verbose=False)
 # sys.exit(1)
 
 #Bootstrap parameters
-n_bootstraps = 50
+n_bootstraps = 100
 alpha = 0.05
 lower_quantile = alpha/2
 upper_quantile = 1 - (alpha/2)
@@ -503,17 +503,15 @@ X_predicted_df = X.reset_index()
 X_predicted_df["predicted_salary"] = model.predict(X)
 X_predicted_df["predicted_salary"] = X_predicted_df["predicted_salary"].apply(np.floor)
 X_predicted_df["confidence_interval_lower_bound"] = lower_bounds
+X_predicted_df["confidence_interval_lower_bound"] = X_predicted_df["confidence_interval_lower_bound"].astype(int)
 X_predicted_df["confidence_interval_upper_bound"] = upper_bounds
+X_predicted_df["confidence_interval_upper_bound"] = X_predicted_df["confidence_interval_upper_bound"].astype(int)
+X_predicted_df.drop_duplicates(subset=["job_id"], inplace=True)
+X_predicted_df = X_predicted_df[["job_id", "predicted_salary", "confidence_interval_lower_bound",
+                                 "confidence_interval_upper_bound"]]
 
-new_facts_df = read_table_from_bq(facts_query, project_id=PROJECT_ID)
-
-new_facts_df = new_facts_df.merge(X_predicted_df[["job_id", "predicted_salary",
-                                      "confidence_interval_lower_bound","confidence_interval_upper_bound"]], on="job_id")
-
-new_facts_df.drop_duplicates(subset=["job_id"], inplace=True)
-
-insert_dataframe_to_bigquery(df=new_facts_df,
-                             dataset_table_name='living_wages_project.facts_jobs_salary',
+insert_dataframe_to_bigquery(df=X_predicted_df,
+                             dataset_table_name='living_wages_project.facts_jobs_model',
                              project_id=PROJECT_ID,
                              if_exists='replace')
 
@@ -557,5 +555,3 @@ for n in tqdm(range(upper_range - lower_range), desc="Generating SHAP plots"):
 
 print()
 print("finished running script")
-
-
