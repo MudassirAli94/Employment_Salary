@@ -68,4 +68,10 @@ More on catboosting here: https://catboost.ai/
 | Null Value - MIT Living Wages   | 1800    | 0.98    |
 | Final Model - Salary   | 24374     | 0.66    |
 
+The final model is acceptable with a 0.66 R squared and our predictions being off by about 24k. Our smaller models range from decent to poor based on the r squared values.
+
+Bar chart displaying top coefficents affecting our salary
+![image](https://github.com/KaiwenLian/CIS9440Group9/assets/38592433/cad953e0-3f9a-4f51-9266-190f39f812c8)
+
+
 
