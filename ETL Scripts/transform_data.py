@@ -1,20 +1,20 @@
-import numpy as np
 import pandas as pd
-import re
-from gcp_functions import (read_csv_from_gcs, insert_dataframe_to_bigquery,
-                           create_bigquery_schema)
+import numpy as np
+from gcp_functions import read_table_from_bq, insert_dataframe_to_bigquery
 import json
-import uuid
-from uszipcode import SearchEngine
+from catboost import CatBoostRegressor
 pd.set_option('display.max_columns', None)
-
 import warnings
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_absolute_error, r2_score
+import math
+from statsmodels.stats.outliers_influence import variance_inflation_factor
+import shap
+from statsmodels.tools.tools import add_constant
+import matplotlib.pyplot as plt
+from tqdm import tqdm
 
 warnings.filterwarnings("ignore")
-
-
-
-## GCP configuration
 
 with open('config.json') as config_file:
     config = json.load(config_file)
@@ -22,738 +22,565 @@ with open('config.json') as config_file:
 YOUR_BUCKET_NAME = config["bucket_name"]
 PROJECT_ID = config["project_id"]
 
-from google.cloud import storage
-from io import StringIO
+# Read the data from BigQuery into a pandas DataFrame
 
+facts_query = f"""
+SELECT * FROM living_wages_project.facts_jobs
+"""
 
-## clean and transform levels_fyi_data
+dim_job_query = f"""
+SELECT * FROM living_wages_project.facts_jobs_salary
+"""
 
-state_abbreviations = {
-    "Alabama": "AL", "Alaska": "AK", "Arizona": "AZ", "Arkansas": "AR", "California": "CA",
-    "Colorado": "CO", "Connecticut": "CT", "Delaware": "DE", "Florida": "FL", "Georgia": "GA",
-    "Hawaii": "HI", "Idaho": "ID", "Illinois": "IL", "Indiana": "IN", "Iowa": "IA",
-    "Kansas": "KS", "Kentucky": "KY", "Louisiana": "LA", "Maine": "ME", "Maryland": "MD",
-    "Massachusetts": "MA", "Michigan": "MI", "Minnesota": "MN", "Mississippi": "MS",
-    "Missouri": "MO", "Montana": "MT", "Nebraska": "NE", "Nevada": "NV", "New Hampshire": "NH",
-    "New Jersey": "NJ", "New Mexico": "NM", "New York": "NY", "North Carolina": "NC",
-    "North Dakota": "ND", "Ohio": "OH", "Oklahoma": "OK", "Oregon": "OR", "Pennsylvania": "PA",
-    "Rhode Island": "RI", "South Carolina": "SC", "South Dakota": "SD", "Tennessee": "TN",
-    "Texas": "TX", "Utah": "UT", "Vermont": "VT", "Virginia": "VA", "Washington": "WA",
-    "West Virginia": "WV", "Wisconsin": "WI", "Wyoming": "WY",
-    "District of Columbia": "DC", "Puerto Rico": "PR", "Remote":"Remote"
-}
+facts_df = read_table_from_bq(facts_query, project_id=PROJECT_ID)
+dim_job_df = read_table_from_bq(dim_job_query, project_id=PROJECT_ID)
 
-levels_df = read_csv_from_gcs(project_id=PROJECT_ID,
-                              bucket_name=YOUR_BUCKET_NAME,
-                              file_name="2024-04-15/levels_fyi_20240415170012.csv")
+df = facts_df.merge(dim_job_df[["job_title","job_id", "job_family","occupational_area", "company_name","salary"]], on="job_id").drop_duplicates(subset=["job_id"])
+df = df[df["job_family"] != "Other"]
 
-levels_df['offerDate'] = levels_df['offerDate'].str.slice(start=0, stop=24)
-# Now, convert the 'offerDate' column to datetime without specifying a format
-levels_df['offerDate'] = pd.to_datetime(levels_df['offerDate'])
-# Format the datetime as 'YYYYMMDD' string and then convert to integer
-levels_df['offerDate'] = levels_df['offerDate'].dt.strftime('%Y%m%d').astype(int)
+df["company_name"] = df["company_name"].fillna("Not Listed or Start Up")
 
-## getting short hand for state
+## make flagged columns if the job is: head, lead, senior, vp, avp, director
 
-levels_df["state_short"] = levels_df.location.apply(lambda i: str(i).split(', ')[-1])
-levels_df["state"] = levels_df["state_short"].map({abbrev: state for state, abbrev in state_abbreviations.items()})
-levels_df["city"] = levels_df.location.apply(lambda i: str(i).split(', ')[0])
+df["job_title"] = df.job_title.str.lower()
+df["job_title"] = df.job_title.str.replace("vice president","vp")
+df["job_title"] = df.job_title.str.replace("assistant vice president","avp")
 
-## only interested in levels in USA
+df["chief_flag"] = df.job_title.str.contains("chief", case=False).astype(int)
+df["head_flag"] = df.job_title.str.contains("head", case=False).astype(int)
+df["lead_flag"] = df.job_title.str.contains("lead", case=False).astype(int)
+df["senior_flag"] = df.job_title.str.contains("senior", case=False).astype(int)
+df["vp_flag"] = df.job_title.str.contains("vp", case=False).astype(int)
+df["president_flag"] = df.job_title.str.contains("president", case=False).astype(int)
+df["avp_flag"] = df.job_title.str.contains("avp", case=False).astype(int)
+df["director_flag"] = df.job_title.str.contains("director", case=False).astype(int)
+df["executive_flag"] = df.job_title.str.contains("director", case=False).astype(int)
 
-levels_df = levels_df[levels_df.state_short.isnull() != True]
-levels_df = levels_df[levels_df.state_short.isin(state_abbreviations.values())]
+df = df.drop(columns = ["job_title"])
 
-## replace the brackets and quotes in the tags column
+## begin ML on missing rows of columns
 
-levels_df["tags"] = levels_df["tags"].apply(lambda i: str(i).replace("[",""))\
-.apply(lambda i: str(i).replace("]","")).apply(lambda i: str(i).replace("'",""))\
-    .apply(lambda i: str(i).replace(",","")).apply(lambda i: str(i).replace("-",""))\
-    .apply(lambda i: np.nan if i == 'nan' else i)
+## run cat boost regression on salary
 
-## dropping columns that are more than 50% missing
+df_salary_null = df[(df.salary == 0)]
+# cols = list(df_salary_null.drop(columns=["salary", "dma_id","location_id", "years_of_experience" , "mit_estimated_baseline_salary",
+#                                          "years_at_level"]).columns)
 
-missing_percentages = levels_df.isnull().mean() * 100
-columns_to_drop = missing_percentages[missing_percentages > 50].index
+cols = ["job_id","job_family", "company_name","occupational_area", "head_flag", "lead_flag", "senior_flag", "vp_flag", "avp_flag",
+        "director_flag", "executive_flag","chief_flag", "president_flag", "total_population_density" , "location_id"]
+df_salary_null = df_salary_null[cols]
 
-levels_df = levels_df.drop(columns=columns_to_drop)
-levels_df = levels_df.drop(columns=["location","companyInfo.slug","exchangeRate","companyInfo.registered",
-                                    "baseSalaryCurrency","countryId","cityId",'compPerspective',"totalCompensation"])
+df_salary_null = df_salary_null.dropna()
+df_salary_null.set_index("job_id", inplace=True)
 
+assert df_salary_null.shape[0] > 0 , "There are no values in the salary column"
 
-## rename column to snake case
-def to_snake_case(column_name):
-    # Replace dots with underscores
-    column_name = column_name.replace('.', '_')
-    # Insert underscores before capital letters and convert to lowercase
-    return ''.join(['_' + i.lower() if i.isupper() else i for i in column_name]).lstrip('_')
+print("length of null salary dataframe", df_salary_null.shape[0])
 
-# Apply the conversion function to each column name in the list
-snake_case_columns = [to_snake_case(column) for column in levels_df.columns]
 
-levels_df.columns = snake_case_columns
+cols.append("salary")
+df_salary = df[(df.salary > 0)]
+#df_salary["salary"] = df_salary["salary"].apply(lambda i: np.log((i+1)/1000))
+df_salary = df_salary[cols]
+df_salary = df_salary.dropna()
+df_salary.set_index("job_id", inplace=True)
 
+assert df_salary.shape[0] > 0 , "There are no values in the salary column"
 
+print("length of salary dataframe", df_salary.shape[0])
 
-## Rearrange columns
-
-levels_df = levels_df[['uuid','state','state_short', 'city', 'title', 'job_family', 'level', 'focus_tag',
-       'years_of_experience', 'years_at_company', 'years_at_level',
-       'offer_date', 'work_arrangement', 'dma_id', 'base_salary', 'company_info_icon', 'company_info_name']]
-
-levels_df = levels_df.rename(columns = {"base_salary":"salary","uuid":"job_id"})
-levels_df = levels_df.drop_duplicates(subset = ["job_id"])
-
-## convert floats to int
+X = df_salary.drop('salary', axis=1)
+y = df_salary['salary']
 
-for n in ["salary","dma_id"]:
-    levels_df[n] = levels_df[n].astype(int)
+# Define categorical features
+categorical_features = ['job_family', 'occupational_area', "location_id" ,"company_name"]
 
+## train test split
 
-unique_names = levels_df['company_info_name'].unique()
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-levels_df["city"] = levels_df["city"].apply(lambda i: i.replace("West McLean","McLean"))
+# Initialize CatBoostRegressor
+model = CatBoostRegressor(cat_features=categorical_features, random_seed=42)
 
-for n in ["years_at_company","years_at_level","years_of_experience"]:
-    levels_df[n] = levels_df[n].apply(lambda i: str(i).replace("0-1","0"))
-    levels_df[n] = levels_df[n].apply(lambda i: str(i).replace("2-4", "3"))
-    levels_df[n] = levels_df[n].apply(lambda i: str(i).replace("5-10", "7"))
-    levels_df[n] = levels_df[n].apply(lambda i: str(i).replace("+",""))
-    levels_df[n] = levels_df[n].apply(lambda i: str(i).replace("10-May", ""))
-    levels_df[n] = levels_df[n].apply(lambda i: str(i).replace("4-Feb", ""))
-    levels_df = levels_df[~levels_df[n].str.contains('-', na=False)]
-    levels_df[n] = levels_df[n].astype(float)
-
-
-print(levels_df.head())
+## fit train and test
+model.fit(X_train, y_train, eval_set=(X_test,y_test) , verbose=False)
 
-## clean and transform mit living wages data
+predictions = model.predict(X_test)
 
-living_wage_df = read_csv_from_gcs(project_id=PROJECT_ID,
-bucket_name=YOUR_BUCKET_NAME, file_name="2024-04-15/mit_living_wages_20240415170017.csv")
+#predictions = np.exp(predictions) - 1
 
-living_wage_df.typicalAnnualSalary = living_wage_df.typicalAnnualSalary.apply(lambda i: str(i).replace("$","")).apply(lambda i: str(i).replace(",",""))
-living_wage_df.typicalAnnualSalary = living_wage_df.typicalAnnualSalary.astype(int)
+#y_test = y_test.apply(lambda i: np.exp(i)*1000)
 
+# Calculate Mean Absolute Error
+mae = mean_absolute_error(y_test, predictions)
+print()
+print("Mean Absolute Error (MAE) for predicting salary:", mae)
 
+# Calculate R-squared
+r2 = r2_score(y_test, predictions)
 
-cols_list = ["occupational_area","annual_salary","location_name","state"]
-living_wage_df.columns = cols_list
-
-living_wage_df["occupational_area"] = living_wage_df["occupational_area"].apply(lambda i: i.replace('"',''))
-
-living_wage_df["location_name"] = living_wage_df["location_name"].apply(lambda i: str(i).split(",")[0])
-
-living_wage_df['state_short'] = living_wage_df['state'].map(state_abbreviations)
-living_wage_df["location_name"] = living_wage_df["location_name"].apply(lambda i: i.replace(" County",""))
-living_wage_df["location_name"] = living_wage_df["location_name"].apply(lambda i: i.replace(" city",""))
-living_wage_df["location_name"] = living_wage_df["location_name"].apply(lambda i: i.replace(" Borough",""))
-living_wage_df["location_name"] = living_wage_df["location_name"].apply(lambda i: i.replace("New York-Newark-Jersey City, NY","Newark"))
-living_wage_df["location_name"] = living_wage_df["location_name"].apply(lambda i: i.split("-")[0])
-
-living_wage_df = living_wage_df.rename(columns={"annual_salary":"salary" ,"location_name":"county"})
-living_wage_df_newark = living_wage_df[living_wage_df["county"] == "Newark"]
-living_wage_df_newark["county"] = "Jersey"
-living_wage_df = pd.concat([living_wage_df, living_wage_df_newark])
-living_wage_df = living_wage_df.sort_values(by = ["state","county"])
-
-#print(living_wage_df.head())
-
-category_map = {
-    'Marketing Operations': 'Business & Financial Operations',
-    'Software Engineer': 'Computer & Mathematical',
-    'Mechanical Engineer': 'Architecture & Engineering',
-    'Program Manager': 'Management',
-    'Business Analyst': 'Business & Financial Operations',
-    'Software Engineering Manager': 'Computer & Mathematical',
-    'Recruiter': 'Business & Financial Operations',
-    'Geological Engineer': 'Architecture & Engineering',
-    'Accountant': 'Business & Financial Operations',
-    'Project Manager': 'Management',
-    'Business Development': 'Business & Financial Operations',
-    'Technical Program Manager': 'Computer & Mathematical',
-    'Product Designer': 'Arts, Design, Entertainment, Sports, & Media',
-    'Financial Analyst': 'Business & Financial Operations',
-    'Sales': 'Sales & Related',
-    'Data Science Manager': 'Computer & Mathematical',
-    'Human Resources': 'Business & Financial Operations',
-    'Product Design Manager': 'Arts, Design, Entertainment, Sports, & Media',
-    'Solution Architect': 'Computer & Mathematical',
-    'Venture Capitalist': 'Business & Financial Operations',
-    'Product Manager': 'Management',
-    'Biomedical Engineer': 'Architecture & Engineering',
-    'Administrative Assistant': 'Office & Administrative Support',
-    'Technical Writer': 'Arts, Design, Entertainment, Sports, & Media',
-    'Civil Engineer': 'Architecture & Engineering',
-    'Chief of Staff': 'Management',
-    'Management Consultant': 'Management',
-    'Legal': 'Legal',
-    'Hardware Engineer': 'Architecture & Engineering',
-    'Copywriter': 'Arts, Design, Entertainment, Sports, & Media',
-    'Marketing': 'Business & Financial Operations',
-    'Customer Service': 'Office & Administrative Support',
-    'Data Scientist': 'Computer & Mathematical',
-    'Security Analyst': 'Computer & Mathematical',
-    'Information Technologist': 'Computer & Mathematical',
-    'Industrial Designer': 'Arts, Design, Entertainment, Sports, & Media',
-    'Founder': 'Management',
-    'Fashion Designer': 'Arts, Design, Entertainment, Sports, & Media',
-    'Investment Banker': 'Business & Financial Operations'
-}
-
-levels_df['occupational_area'] = levels_df["job_family"].map(category_map)
-
-living_wage_df = living_wage_df.rename(columns = {"salary":"mit_estimated_salary"})
-
-
-## clean and transform minimum wage data
-
-minimum_wage_df = read_csv_from_gcs(project_id=PROJECT_ID,
-                                    bucket_name=YOUR_BUCKET_NAME,
-                                    file_name="2024-04-15/minimum_wage_per_state_20240415170019.csv")
-
-cols_list = minimum_wage_df.columns.tolist()
-cols_list = [col.replace(" ", "_").lower() for col in cols_list]
-minimum_wage_df.columns = cols_list
-
-for n in ["minimum_wage", "tipped_wage"]:
-
-    minimum_wage_df[n] = minimum_wage_df[n].apply(lambda i: i.replace("$",""))
-    minimum_wage_df[n] = minimum_wage_df[n].astype(float)
-
-
-minimum_wage_df['state_short'] = minimum_wage_df['state'].map(state_abbreviations)
-
-minimum_wage_df = minimum_wage_df[["state", "state_short", "minimum_wage", "tipped_wage"]]
-
-## INSERT DATA INGESTION TO DATAWARE HOUSE CODE HERE
-
-print(minimum_wage_df.head())
-
-
-## clean and transform start up jobs data
-
-start_ups_df = read_csv_from_gcs(project_id=PROJECT_ID,
-bucket_name=YOUR_BUCKET_NAME, file_name="2024-04-15/startups_jobs_20240415170023.csv")
-
-
-start_ups_df["num_employees"] = start_ups_df["num_employees"].apply(lambda i: str(i).split(" ")[0])\
-    .apply(lambda i: str(i).split("-")[-1]).apply(lambda i: str(i).replace("+",""))
-start_ups_df["num_employees"] = start_ups_df["num_employees"].astype(int)
-
-start_ups_df["date"] = start_ups_df["date"].apply(lambda i: str(i).replace("/",""))
-start_ups_df["date"] = start_ups_df["date"].astype(int)
-
-start_ups_df['salary'] = start_ups_df['salary'].str.replace(r"\+.*", "", regex=True)
-start_ups_df['salary'] = start_ups_df['salary'].str.replace("$","")
-start_ups_df['salary'] = start_ups_df['salary'].str.replace(",","")
-start_ups_df['salary'] = start_ups_df['salary'].astype(int)
-
-location_mapping = {
-    'San Francisco': 'CA',
-    'San Francisco Bay Area': 'CA',
-    'New York City': 'NY',
-    'New York': 'NY',
-    'NYC': 'NY',
-    # Add more mappings as needed
-}
-
-
-def map_location_to_state(location, state_abbreviations):
-    # Simplified mapping for cities to states, expand as needed
-    city_to_state = {
-        "San Francisco": "California", "San Francisco Bay Area": "California",
-        "New York City": "New York", "Los Angeles": "California", "Seattle": "Washington",
-        "Austin": "Texas", "Boston": "Massachusetts", "Chicago": "Illinois", "Dallas": "Texas",
-        "Houston": "Texas", "Miami": "Florida", "San Diego": "California", "Washington DC": "District of Columbia",
-        "Remote": "Remote", "Remote US": "Remote"
-        # Add more mappings as necessary
-    }
-    # Handle generic 'Remote' cases or specific 'Remote US' cases by returning None or a specific value
-    if 'UAE' in location or 'Estonia' in location or 'Remote Switzerland' in location:
-        return None
-
-    # Map city names to states, and then states to abbreviations
-    if location in city_to_state:
-        state_name = city_to_state[location]
-        return state_abbreviations.get(state_name, None)
-
-    # Directly map known state names to abbreviations
-    return state_abbreviations.get(location, None)
-
-
-start_ups_df['state_short'] = start_ups_df['location'].apply(lambda x: map_location_to_state(x, state_abbreviations))
-
-# Drop rows with None in 'location' if needed
-
-start_ups_df = start_ups_df[start_ups_df["state_short"].isnull() != True]
-
-start_ups_df["location"] = start_ups_df["location"].replace(["San Francisco Bay Area","New York City","Remote US"],["San Francisco","New York","Remote"])
-
-start_ups_df = start_ups_df.rename(columns = {"location":"city"})
-
-start_ups_df = start_ups_df[["job_title","city","state_short","salary","num_employees","date"]]
-
-## INSERT DATA INGESTION TO DATAWARE HOUSE CODE HERE
-
-print(start_ups_df.head())
-
-
-## transform census data
-
-search = SearchEngine()
-
-
-all_zipcodes = search.by_coordinates(39.122229, -77.133578, radius=5000, returns=None)
-
-
-all_data = [z.to_dict() for z in all_zipcodes]
-
-all_zip_df = pd.DataFrame(all_data)
-all_zip_df = all_zip_df[["major_city", "county", "state" ,"zipcode","lat","lng","population", "population_density","land_area_in_sqmi","housing_units","occupied_housing_units"]]
-all_zip_df = all_zip_df.rename(columns={"state":"state_short"})
-all_zip_df["major_city"] = all_zip_df["major_city"].apply(lambda i: str(i).replace(" city",""))
-all_zip_df["major_city"] = all_zip_df["major_city"].apply(lambda i: str(i).replace(" City",""))
-
-abbrev_to_full_state = {v: k for k, v in state_abbreviations.items()}
-all_zip_df['state'] = all_zip_df['state_short'].map(abbrev_to_full_state)
-
-all_zip_df["primary_key"] = all_zip_df["major_city"] + "_" + all_zip_df["state"]
-
-aggregations = {
-    'population': 'sum',
-    'population_density': 'sum',
-    'land_area_in_sqmi': 'sum',
-    'housing_units': 'sum',
-    'occupied_housing_units': 'sum',
-    'lat': 'mean',
-    'lng': 'mean',
-    'county': 'first',  # Keep the first occurrence
-    'state': 'first',
-    "state_short": "first",
-    'major_city': 'first'
-}
-
-# Perform aggregation
-all_zip_aggregated_df = all_zip_df.groupby("primary_key").agg(aggregations).reset_index()
-
-# Rename columns
-all_zip_aggregated_df.rename(columns={
-    "population": "total_population",
-    "population_density": "total_population_density",
-    "land_area_in_sqmi": "total_land_area",
-    "housing_units": "total_housing_units",
-    "occupied_housing_units": "total_occupied_housing_units",
-    "lat": "latitude",
-    "lng": "longitude",
-    "major_city": "city",
-    "state": "state"
-}, inplace=True)
-
-census_df = all_zip_aggregated_df.copy()
-
-print(census_df.head())
-
-
-## transform DMA data
-
-dma_df = read_csv_from_gcs(project_id=PROJECT_ID,
-bucket_name=YOUR_BUCKET_NAME, file_name="2024-04-15/dma_data_20240415170025.csv")
-
-
-
-dma_df = dma_df.rename(columns = {"Designated Market Area (DMA)":"location_name","Rank":"rank","TV Homes":"tv_homes","% of US":"percent_of_united_states","DMA Code":"dma_id"})
-
-dma_df["location_name"] = dma_df["location_name"].apply(lambda i: i.split(",")[0])
-dma_df["location_name"] = dma_df["location_name"].apply(lambda i: i.split(" (")[0])
-dma_df["location_name"] = dma_df["location_name"].apply(lambda i: i.split("(")[0])
-dma_df["location_name"] = dma_df["location_name"].apply(lambda i: i.split("-")[0])
-dma_df["location_name"] = dma_df["location_name"].apply(lambda i: i.split(" &")[0])
-dma_df["location_name"] = dma_df["location_name"].apply(lambda i: i.split("&")[0])
-dma_df["location_name"] = dma_df["location_name"].apply(lambda i: i.replace(" City",""))
-dma_df["location_name"] = dma_df["location_name"].apply(lambda i: i.replace("Ft.","Fort"))
-dma_df["location_name"] = dma_df["location_name"].apply(lambda i: i.replace("Sacramnto","Sacramento"))
-dma_df["location_name"] = dma_df["location_name"].apply(lambda i: i.replace("SantaBarbra","Santa Barbara"))
-dma_df["location_name"] = dma_df["location_name"].apply(lambda i: i.replace("Idaho Fals","Idaho Falls"))
-dma_df["location_name"] = dma_df["location_name"].apply(lambda i: i.replace("Honolulu","Honolulu"))
-dma_df["location_name"] = dma_df["location_name"].apply(lambda i: i.replace("Rochestr","Rochester"))
-dma_df["location_name"] = dma_df["location_name"].apply(lambda i: i.replace("Greenvll","Greenville"))
-dma_df["location_name"] = dma_df["location_name"].apply(lambda i: i.replace("Wilkes Barre","Wilkes-Barre"))
-dma_df["location_name"] = dma_df["location_name"].apply(lambda i: i.replace("St Joseph","St. Joseph"))
-
-dma_df = dma_df.sort_values(by="rank")
-
-## INSERT DATA INGESTION TO DATAWARE HOUSE CODE HERE
-
-print(dma_df.head())
-
-
-## transform efinancial data
-
-efinancial_df = read_csv_from_gcs(project_id=PROJECT_ID,
-bucket_name=YOUR_BUCKET_NAME, file_name="2024-04-15/efinancial_jobs_20240415170055.csv")
-
-# Define a function to remove string values from salary
-def extract_salary(salary_str):
-    # Use regular expression to find numeric values
-    match = re.search(r'\d[\d,]*\d', salary_str)
-    if match:
-        value = float(match.group().replace(',', ''))
-        # Check if the value is less than 1000, implying it's in thousands
-        if value < 1000:
-            return value * 1000  # Convert to full amount in dollars
-        else:
-            return value
-    else:
-        return 0
-
-
-efinancial_df['salary'] = efinancial_df['salary'].apply(extract_salary)
-efinancial_df = efinancial_df.dropna(subset=['salary'])
-
-
-# Define a function to extract year and month from date
-def extract_year_month(date_str):
-    match = re.match(r'(\d{4})-(\d{2})-(\d{2})', date_str)
-    if match:
-        year = int(match.group(1))
-        month = int(match.group(2))
-        return year * 100 + month
-    else:
-        return None
-
-
-efinancial_df['date'] = efinancial_df['date'].apply(extract_year_month)
-
-
-def extract_state_abbreviation(state_str):
-    state_name = str(state_str).split(', ')[-1]
-    return state_abbreviations.get(state_name)
-
-
-# Apply the function to the 'state' column to create a new column 'state_short'
-efinancial_df['state_short'] = efinancial_df['state'].apply(extract_state_abbreviation)
-df_job_data = efinancial_df[efinancial_df['state_short'].isin(state_abbreviations.values())]
-df_job_data = df_job_data.drop(columns=['state'])
-df_job_data.insert(loc=2, column='state_short', value=df_job_data.pop('state_short'))
-
-df_job_data.job_title = df_job_data.job_title.apply(lambda i: i.replace('"',''))
-df_job_data.job_title = df_job_data.job_title.apply(lambda i: i.replace("2025 ", ""))
-
-
-## INSERT DATA INGESTION TO DATAWARE HOUSE CODE HERE
-print(df_job_data)
-
-
-## getting fact table
-
-levels_facts_df = levels_df[["job_id", "dma_id", "state", "state_short","city","salary","years_of_experience","years_at_company","years_at_level", "occupational_area"]].copy()
-minimum_facts_df = minimum_wage_df[["state","minimum_wage","tipped_wage"]].copy()
-
-
-living_wage_fact_df = living_wage_df.rename(columns={"county":"city"}).merge(census_df[["county","state_short","city"]], on = ["city","state_short"], how = "left")
-
-print(living_wage_fact_df.head())
-
-levels_facts_df = levels_facts_df.merge(living_wage_fact_df[["occupational_area","city", "state_short","mit_estimated_salary"]]\
-                                        , on = ["occupational_area","city","state_short"], how = "left")
-levels_facts_df.drop_duplicates(subset = ["job_id"], inplace=True)
-levels_facts_df = levels_facts_df.rename(columns = {"mit_estimated_salary":"mit_estimated_baseline_salary"})
-
-
-## merge with dma_df
-levels_facts_df = levels_facts_df.merge(dma_df[["dma_id","rank","tv_homes","percent_of_united_states"]], on = "dma_id", how = "left")
-## merge with minimum_wage_df
-levels_facts_df = levels_facts_df.merge(minimum_wage_df[["state","minimum_wage","tipped_wage"]], on = "state", how = "left")
-## merge with county_facts_df
-levels_facts_df = levels_facts_df.merge(census_df, on = ["city","state"], how = "left")
-
-
-levels_facts_df = levels_facts_df.rename(columns = {"state_short_y":"state_short"})
-levels_facts_df = levels_facts_df.drop_duplicates(subset = ["job_id"])
-
-levels_facts_df = levels_facts_df.drop_duplicates(subset = ["job_id"])
-
-levels_facts_df = levels_facts_df.drop(columns=["state","state_short_x","city","occupational_area", "county","latitude",
-                                                "longitude","state_short"
-                                                ])
-levels_facts_df = levels_facts_df.rename(columns = {"primary_key":"location_id"})
-
-facts_df = levels_facts_df.copy()
-
-
-
-
-## get dma dimension
-
-dim_dma_df = dma_df[["dma_id","location_name"]].copy()
-print(dim_dma_df.head())
-
-## get dim location dimension
-
-dim_location_df = census_df[["county","city","state","state_short","latitude","longitude","primary_key"]].copy()
-dim_location_df = dim_location_df.rename(columns = {"primary_key":"location_id"})
-
-## get dim jobs dimension
-
-dim_jobs_df = efinancial_df[["job_title","city","state_short","salary"]].copy()
-dim_jobs_df = pd.concat([dim_jobs_df, start_ups_df[["job_title","city","state_short","salary"]]])
-
-## creating a primary key for the dim_jobs_df
-def generate_uuid():
-    return str(uuid.uuid4())
-
-# Apply the generate_uuid function to a new column 'job_id'
-dim_jobs_df['job_id'] = dim_jobs_df.apply(lambda x: generate_uuid(), axis=1)
-
-occupational_area_map = {
-    'Marketing Operations': 'Business & Financial Operations',
-    'Software Engineer': 'Computer & Mathematical',
-    'Mechanical Engineer': 'Architecture & Engineering',
-    'Program Manager': 'Management',
-    'Business Analyst': 'Business & Financial Operations',
-    'Software Engineering Manager': 'Computer & Mathematical',
-    'Recruiter': 'Human Resources',
-    'Geological Engineer': 'Architecture & Engineering',
-    'Accountant': 'Business & Financial Operations',
-    'Project Manager': 'Management',
-    'Business Development': 'Sales & Related',
-    'Technical Program Manager': 'Computer & Mathematical',
-    'Product Designer': 'Arts, Design, Entertainment, Sports, & Media',
-    'Financial Analyst': 'Business & Financial Operations',
-    'Sales': 'Sales & Related',
-    'Data Science Manager': 'Computer & Mathematical',
-    'Human Resources': 'Human Resources',
-    'Product Design Manager': 'Arts, Design, Entertainment, Sports, & Media',
-    'Solution Architect': 'Computer & Mathematical',
-    'Venture Capitalist': 'Business & Financial Operations',
-    'Product Manager': 'Management',
-    'Biomedical Engineer': 'Architecture & Engineering',
-    'Administrative Assistant': 'Office & Administrative Support',
-    'Technical Writer': 'Arts, Design, Entertainment, Sports, & Media',
-    'Civil Engineer': 'Architecture & Engineering',
-    'Chief of Staff': 'Management',
-    'Management Consultant': 'Management',
-    'Legal': 'Legal',
-    'Hardware Engineer': 'Computer & Mathematical',
-    'Copywriter': 'Arts, Design, Entertainment, Sports, & Media',
-    'Marketing': 'Business & Financial Operations',
-    'Customer Service': 'Office & Administrative Support',
-    'Data Scientist': 'Computer & Mathematical',
-    'Security Analyst': 'Computer & Mathematical',
-    'Information Technologist': 'Computer & Mathematical',
-    'Industrial Designer': 'Arts, Design, Entertainment, Sports, & Media',
-    'Founder': 'Management',
-    'Fashion Designer': 'Arts, Design, Entertainment, Sports, & Media',
-    'Investment Banker': 'Business & Financial Operations'
-}
-
-# Function to match job titles to job family and occupational area
-
-def match_job(title):
-    title_lower = title.lower()
-
-    # Using regex to match full words or specific phrases to avoid partial matches
-    if re.search(r'\b(cio|ceo|cto|coo|cfo|chief executive officer|chief technology officer|chief operating officer|chief)\b', title_lower):
-        return 'Chief of Staff', 'Management'
-
-    if re.search(r'\b(president|vice president|vp|avp|svp|director)\b', title_lower):
-        return 'Program Manager', 'Management'
-
-    if re.search(r'\b("lead software|lead devops|lead mobile|lead ios|lead frontend|lead backend|lead machine learning engineer")\b', title_lower):
-        return 'Software Engineering Manager', 'Computer & Mathematical'
-
-    if re.search(r'\b(lead data scientist|head of data science|manager, data sci|senior manager, data sci)\b', title_lower):
-        return 'Data Science Manager', 'Computer & Mathematical'
-
-    if re.search(r'\b(data science|data scientist)\b', title_lower):
-        return 'Data Scientist', 'Computer & Mathematical'
-
-    if re.search(r'\b(product manager|head of product|manager, product|product management|director of product|vp of product|product lead|lead product)\b', title_lower):
-        return 'Product Manager', 'Management'
-
-    if re.search(r'\b(business operation|bizops|business development|business intelligence)\b', title_lower):
-        return 'Business & Financial Operations', 'Business & Financial Operations'
-
-    if re.search(r'\b(machine learning engineer|analyst|analytics|quantitative|data engineer|computer vision|ux|principal ai|database)\b', title_lower):
-        return 'Computer & Mathematical', 'Computer & Mathematical'
-
-    if re.search(r'\b(wealth|investment|investments|banker|financial|finance)\b', title_lower):
-        return 'Financial Analyst', 'Business & Financial Operations'
-
-    if re.search(r'\b(product|content designer|brand designer)\b', title_lower):
-        return 'Product Designer', 'Arts, Design, Entertainment, Sports, & Media'
-
-    if re.search(r'\b(devops|developer|software|frontend|backend|front end|back end|fullstack|full stack|full-stack|principal engineer|systems engineer|support engineer|firmware engineer|solutions engineer)\b', title_lower):
-        return 'Software Engineer', 'Computer & Mathematical'
-
-    if re.search(r'\b(representative|customer service|customer experience|customer support)\b', title_lower):
-        return 'Customer Service', 'Office & Administrative Support'
-
-    if re.search(r'\b(actuary)\b', title_lower):
-        return 'Financial Analyst', 'Business & Financial Operations'
-
-    if re.search(r'\b(teller|cashier)\b', title_lower):
-        return 'Customer Service', 'Office & Administrative Support'
-
-    if re.search(r'\b(legal|counsel|attorney|lawyer|paralegal)\b', title_lower):
-        return 'Legal', 'Legal'
-
-    if re.search(r'\b(mechanical engineer|civil engineer|industrial engineer)\b', title_lower):
-        return 'Mechanical Engineer', 'Architecture & Engineering'
-
-    if re.search(r'\b(hardware engineer|hardware systems architect)\b', title_lower):
-        return 'Hardware Engineer', 'Architecture & Engineering'
-
-    if re.search(r'\b(underwriter)\b', title_lower):
-        return 'Copywriter', 'Arts, Design, Entertainment, Sports, & Media'
-
-    if re.search(r'\b(security engineer)\b', title_lower):
-        return 'Security Analyst', 'Computer & Mathematical'
-
-    if re.search(r'\b(systems engineer)\b', title_lower):
-        return 'Information Technologist', 'Computer & Mathematical'
-
-    if re.search(r'\b(solutions architect|solution architect)\b', title_lower):
-        return 'Solution Architect', 'Computer & Mathematical'
-
-    if re.search(r'\b(data governance|infrastructure engineer)\b', title_lower):
-        return 'Information Technologist', 'Computer & Mathematical'
-
-    if re.search(r'\b(sales engineer)\b', title_lower):
-        return 'Sales', 'Sales & Related'
-
-    if re.search(r'\b(manager|lead|head|supervisor|coordinator|executive)\b', title_lower):
-        return 'Management', 'Management'
-
-    return "Other", "Other"  # Fallback if no match is found
-
-
-# Apply the final customer service specific matching function to the DataFrame
-dim_jobs_df['job_family'], dim_jobs_df['occupational_area'] = zip(*dim_jobs_df['job_title'].apply(match_job))
-
-# Display the updated DataFrame
-
-
-dim_jobs_df["state"] = dim_jobs_df["state_short"].map({abbrev: state for state, abbrev in state_abbreviations.items()})
-
-dim_jobs_df["city"] = dim_jobs_df["city"].apply(lambda i: i.replace(" City",""))
-dim_jobs_df["city"] = dim_jobs_df["city"].apply(lambda i: i.replace("Manhattan","New York"))
-
-## get minimum wage per state for dim_jobs_df
-dim_jobs_df = dim_jobs_df.merge(minimum_wage_df[["state","minimum_wage","tipped_wage"]], on = "state", how = "left")
-## get DMA data for dim_jobs_df
-dim_jobs_df = dim_jobs_df.merge(dma_df.rename(columns = {"location_name":"city"}), on = "city", how = "left")
-## get county data for dim_jobs_df
-dim_jobs_df = dim_jobs_df.merge(census_df, on = ["city","state"], how = "left")
-## merge living wages to get mit estimated salary
-dim_jobs_df = dim_jobs_df.merge(living_wage_df[["occupational_area","county","mit_estimated_salary"]], on = ["occupational_area","county"], how = "left")
-## get average mit estimated salary because many counties roll up to one city
-mean_mit_salary_df = dim_jobs_df.groupby("job_id")["mit_estimated_salary"].mean().reset_index()
-dim_jobs_df = dim_jobs_df.drop(columns=["mit_estimated_salary"])
-dim_jobs_df = dim_jobs_df.merge(mean_mit_salary_df, on = "job_id", how = "left")
-dim_jobs_df = dim_jobs_df.drop_duplicates(subset = ["job_id"])
-
-dim_jobs_df = dim_jobs_df.rename(columns = {"primary_key":"location_id"})
-
-## ingesting dim_jobs_facts to our facts_df
-facts_columns = facts_df.columns.tolist()
-dim_jobs_columns = dim_jobs_df.columns.tolist()
-
-# Find the columns that are in both DataFrames
-common_columns = list(set(facts_columns).intersection(dim_jobs_columns))
-
-dim_jobs_facts_df = dim_jobs_df[common_columns].copy()
-
-facts_df = pd.concat([facts_df, dim_jobs_facts_df]).copy()
-
-## now making dim_jobs table
-
-dim_jobs_df1 = dim_jobs_df[["job_id","city","state","state_short_x","job_title","job_family","occupational_area","salary"]].copy()
-dim_jobs_df1 = dim_jobs_df1.rename(columns={"state_short_x":"state_short"})
-
-
-levels_dim_jobs_df = levels_df[["job_id","company_info_name","company_info_icon","state","state_short","city","title",
-                                "job_family","occupational_area","salary"]].copy()
-levels_dim_jobs_df = levels_dim_jobs_df.rename(columns={"title":"job_title","company_info_name":"company_name","company_info_icon":"company_icon"})
-
-final_dims_jobs_df = pd.concat([dim_jobs_df1, levels_dim_jobs_df]).copy()
-
-assert final_dims_jobs_df.job_id.isin(facts_df.job_id).sum() == final_dims_jobs_df.shape[0], "All jobs in dim_job table are not in facts table"
-assert facts_df.job_id.isin(final_dims_jobs_df.job_id).sum() == facts_df.shape[0], "All jobs in facts table are not in dim_job table"
+print("R-squared (R²) for predicting salary:", r2)
 print()
 
-## Ingest tables into datawarehouse
-
-## create schema
-
-print(facts_df.columns)
-
-# Column order for the dim_jobs table
-dim_jobs_columns = [
-    'job_id', 'company_name', 'company_icon', 'state', 'state_short',
-    'city', 'job_title', 'job_family', 'occupational_area', "salary"
-]
-
-# Column order for the facts_jobs table
-facts_jobs_columns = [
-    'job_id', 'dma_id', 'location_id',
-    'mit_estimated_baseline_salary', 'years_of_experience', 'years_at_level',
-    'minimum_wage', 'tipped_wage', 'rank',
-    'tv_homes', 'percent_of_united_states','total_population', "total_population_density" ,'total_land_area', 'total_housing_units',
-       'total_occupied_housing_units'
-]
 
 
-# Column order for the dim_location table
-dim_location_columns = [
-    'location_id', 'state', 'state_short', 'county',
-    'city', 'latitude', 'longitude'
-]
+model.fit(X,y,verbose=False)
+
+# Make predictions
+predictions = model.predict(df_salary_null)
+#predictions = np.exp(predictions) - 1
 
 
-# Column order for the dim_dma table
-dim_dma_columns = [
-    'dma_id', 'location_name'
-]
+df_salary_null["salary"] = predictions
+df_salary_null["salary"] = df_salary_null["salary"].apply(lambda i: math.floor(i))
+
+df_salary_full = pd.concat([df_salary.reset_index(), df_salary_null.reset_index()])[["job_id","salary"]]
+df_not_in_pred = df[~df.job_id.isin(df_salary_full.job_id)]
+df = df.drop(columns=["salary"]).merge(df_salary_full, on="job_id")
+
+df = pd.concat([df, df_not_in_pred])
+
+## now for years of experience
+df_yrs_exp_null = df[df.years_of_experience.isnull()==True]
+cols = ["job_id","job_family","occupational_area", "company_name" ,"head_flag", "lead_flag", "senior_flag", "vp_flag", "avp_flag",
+        "director_flag", "executive_flag","chief_flag", "president_flag", "salary" , "location_id"]
+df_yrs_exp_null = df_yrs_exp_null[cols]
+df_yrs_exp_null = df_yrs_exp_null.dropna()
+df_yrs_exp_null.set_index("job_id", inplace=True)
+
+assert df_yrs_exp_null.shape[0] > 0 , "There are no values in the years of experience column"
 
 
-# Assuming final_dims_jobs_df, facts_df, dma_df, and dim_location_df are your DataFrames
-facts_jobs_salary_df = final_dims_jobs_df[dim_jobs_columns]
-facts_df = facts_df[facts_jobs_columns]
-dim_location_df = dim_location_df[dim_location_columns]
-dma_df = dma_df[dim_dma_columns]
+cols.append("years_of_experience")
+df_yrs = df[df.years_of_experience.isnull()==False]
+#df_yrs["years_of_experience"] = df_yrs["years_of_experience"].apply(lambda i: np.log((i+1)/1000))
+df_yrs = df_yrs[cols]
+df_yrs = df_yrs.dropna()
+df_yrs.set_index("job_id", inplace=True)
 
-sql_file_path = "/Users/mudassirali/PycharmProjects/CIS9440Group9/DB_Schema/final_living_wages_schema.sql"
+assert df_yrs.shape[0] > 0 , "There are no values in the years of experience column"
 
-create_bigquery_schema(sql_file_path=sql_file_path)
+## run cat boost regression on years of experience
 
-## ingest tables into schema
+X = df_yrs.drop('years_of_experience', axis=1)
+y = df_yrs['years_of_experience']
 
-insert_dataframe_to_bigquery(df=facts_jobs_salary_df,
-                             dataset_table_name='living_wages_project.facts_jobs_salary',
-                             project_id=PROJECT_ID,
-                             if_exists='replace')
-insert_dataframe_to_bigquery(df=dim_dma_df,
-                             dataset_table_name='living_wages_project.dim_dma',
-                             project_id=PROJECT_ID,
-                             if_exists='replace')
-insert_dataframe_to_bigquery(df=dim_location_df,
-                             dataset_table_name='living_wages_project.dim_location',
-                             project_id=PROJECT_ID,
-                             if_exists='replace')
-insert_dataframe_to_bigquery(df=facts_df,
-                             dataset_table_name='living_wages_project.facts_jobs',
-                             project_id=PROJECT_ID,
-                             if_exists='replace')
+# Define categorical features
+categorical_features = ['job_family', 'occupational_area', "location_id", "company_name"]
 
-facts_df.to_csv("facts_jobs.csv", index=False)
-final_dims_jobs_df.to_csv("dim_jobs.csv", index=False)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-print("ETL process is complete.")
+# Initialize CatBoostRegressor
+model = CatBoostRegressor(cat_features=categorical_features, random_seed=42)
+
+# Fit the model
+
+model.fit(X_train, y_train, eval_set=(X_test,y_test) , verbose=False)
+
+predictions = model.predict(X_test)
+#predictions = np.exp(predictions) - 1
+
+#y_test = y_test.apply(lambda i: np.exp(i)*1000)
+
+# Calculate Mean Absolute Error
+mae = mean_absolute_error(y_test, predictions)
+print()
+print("Mean Absolute Error (MAE) for predicting years of experience:", mae)
+
+# Calculate R-squared
+r2 = r2_score(y_test, predictions)
+print("R-squared (R²) for predicting years of experience:", r2)
+print()
+
+model.fit(X, y, verbose=False)
+
+# Make predictions
+predictions = model.predict(df_yrs_exp_null)
+#predictions = np.exp(predictions) - 1
+
+df_yrs_exp_null["years_of_experience"] = predictions
+df_yrs_exp_null["years_of_experience"] = df_yrs_exp_null["years_of_experience"].apply(lambda i: math.floor(i))
+
+df_yrs_full = pd.concat([df_yrs.reset_index(), df_yrs_exp_null.reset_index()])[["job_id","years_of_experience"]]
+
+df_not_in_pred = df[~df.job_id.isin(df_yrs_full.job_id)]
+df = df.drop(columns=["years_of_experience"]).merge(df_yrs_full, on="job_id")
+
+df = pd.concat([df, df_not_in_pred])
+
+
+
+## now use same exact steps to predict years_at_level
+
+df_yrs_at_level_null = df[df.years_at_level.isnull()==True]
+cols = ["job_id","job_family","occupational_area", "head_flag", "lead_flag", "senior_flag", "vp_flag", "avp_flag",
+        "director_flag", "executive_flag","chief_flag", "president_flag", "salary", "years_of_experience", "location_id",
+        "company_name"]
+df_yrs_at_level_null = df_yrs_at_level_null[cols]
+df_yrs_at_level_null = df_yrs_at_level_null.dropna()
+df_yrs_at_level_null.set_index("job_id", inplace=True)
+
+assert df_yrs_at_level_null.shape[0] > 0 , "There are no values in the years at level column"
+
+cols.append("years_at_level")
+df_yrs_at_level = df[df.years_at_level.isnull()==False]
+#df_yrs_at_level["years_at_level"] = df_yrs_at_level["years_at_level"].apply(lambda i: np.log((i+1)/1000))
+df_yrs_at_level = df_yrs_at_level[cols]
+df_yrs_at_level = df_yrs_at_level.dropna()
+df_yrs_at_level.set_index("job_id", inplace=True)
+
+assert df_yrs_at_level.shape[0] > 0 , "There are no values in the years at level column"
+
+## run cat boost regression on years of experience
+
+X = df_yrs_at_level.drop('years_at_level', axis=1)
+y = df_yrs_at_level['years_at_level']
+
+# Define categorical features
+
+categorical_features = ['job_family', 'occupational_area', "location_id", "company_name"]
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Initialize CatBoostRegressor
+
+model = CatBoostRegressor(cat_features=categorical_features, random_seed=42)
+
+# Fit the model
+
+model.fit(X_train, y_train, eval_set=(X_test,y_test) , verbose=False)
+
+predictions = model.predict(X_test)
+#predictions = np.exp(predictions-1)
+
+#y_test = y_test.apply(lambda i: np.exp(i)*1000)
+
+# Calculate Mean Absolute Error
+mae = mean_absolute_error(y_test, predictions)
+print()
+print("Mean Absolute Error (MAE) for years at level:", mae)
+
+# Calculate R-squared
+r2 = r2_score(y_test, predictions)
+print("R-squared (R²) for years at level:", r2)
+print()
+
+model.fit(X, y, verbose=False)
+
+# Make predictions
+
+predictions = model.predict(df_yrs_at_level_null)
+#predictions = np.exp(predictions) - 1
+
+df_yrs_at_level_null["years_at_level"] = predictions
+df_yrs_at_level_null["years_at_level"] = df_yrs_at_level_null["years_at_level"].apply(lambda i: math.floor(i))
+
+df_yrs_at_level_full = pd.concat([df_yrs_at_level.reset_index(), df_yrs_at_level_null.reset_index()])[["job_id","years_at_level"]]
+df_not_in_pred = df[~df.job_id.isin(df_yrs_at_level_full.job_id)]
+
+df = df.drop(columns=["years_at_level"]).merge(df_yrs_at_level_full, on="job_id")
+
+df = pd.concat([df, df_not_in_pred])
+
+print(df.info())
+
+## now run catboost on mit_estimated_baseline_salary
+
+df_mit_null = df[df.mit_estimated_baseline_salary.isnull()==True]
+cols = ["job_id","job_family","occupational_area", "head_flag", "lead_flag", "senior_flag", "vp_flag", "avp_flag",
+        "director_flag", "executive_flag","chief_flag", "president_flag", "salary", "years_of_experience",
+        "years_at_level", "location_id", "company_name"]
+df_mit_null = df_mit_null[cols]
+df_mit_null = df_mit_null.dropna()
+df_mit_null.set_index("job_id", inplace=True)
+
+assert df_mit_null.shape[0] > 0 , "There are no values in the mit_estimated_baseline_salary column"
+
+cols.append("mit_estimated_baseline_salary")
+df_mit = df[df.mit_estimated_baseline_salary.isnull()==False]
+#df_mit["mit_estimated_baseline_salary"] = df_mit["mit_estimated_baseline_salary"].apply(lambda i: np.log((i+1)/1000))
+df_mit = df_mit[cols]
+df_mit = df_mit.dropna()
+df_mit.set_index("job_id", inplace=True)
+
+assert df_mit.shape[0] > 0 , "There are no values in the mit_estimated_baseline_salary column"
+print(df_mit.shape)
+
+X = df_mit.drop('mit_estimated_baseline_salary', axis=1)
+y = df_mit['mit_estimated_baseline_salary']
+
+# Define categorical features
+
+categorical_features = ['job_family', 'occupational_area', "location_id", "company_name"]
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Initialize CatBoostRegressor
+
+model = CatBoostRegressor(cat_features=categorical_features, random_seed=42, l2_leaf_reg=3)
+
+# Fit the model
+
+model.fit(X_train, y_train, eval_set=(X_test,y_test) , verbose=False)
+
+predictions = model.predict(X_test)
+
+#predictions = np.exp(predictions) - 1
+
+#y_test = y_test.apply(lambda i: np.exp(i)*1000)
+
+# Calculate Mean Absolute Error
+
+mae = mean_absolute_error(y_test, predictions)
+
+print()
+print("Mean Absolute Error (MAE) for predicting mit_estimated_baseline_salary:", mae)
+print()
+
+r2 = r2_score(y_test, predictions)
+print("R-squared (R²) for predicting mit_estimated_baseline_salary:", r2)
+
+model.fit(X, y, verbose=False)
+
+# Make predictions
+
+predictions = model.predict(df_mit_null)
+#predictions = np.exp(predictions) - 1
+
+df_mit_null["mit_estimated_baseline_salary"] = predictions
+df_mit_null["mit_estimated_baseline_salary"] = df_mit_null["mit_estimated_baseline_salary"].apply(lambda i: math.floor(i))
+
+df_mit_full = pd.concat([df_mit.reset_index(), df_mit_null.reset_index()])[["job_id","mit_estimated_baseline_salary"]]
+df_not_in_pred = df[~df.job_id.isin(df_mit_full.job_id)]
+
+df = df.drop(columns=["mit_estimated_baseline_salary"]).merge(df_mit_full, on="job_id")
+
+df = pd.concat([df, df_not_in_pred])
+
+## need to take average of mit_estimated_baseline_salary for each location_id
+
+df_mit_estimated = df.groupby("location_id")["mit_estimated_baseline_salary"].mean().reset_index()
+df = df.drop(columns=["mit_estimated_baseline_salary"]).merge(df_mit_estimated, on="location_id")
+
+print(df[["mit_estimated_baseline_salary", "location_id"]].head(10))
+
+print(df.info())
+
+
+
+## now run catboost regressor on full salary to get relevant coeficients
+
+cols = ["job_id","job_family","occupational_area", "total_population_density", "total_land_area",
+        "years_of_experience","years_at_level", "salary", "total_housing_units",
+        "location_id", "mit_estimated_baseline_salary", "company_name"]
+
+cols_to_check_multi_collinearity = ["total_population_density", "total_land_area", "total_housing_units"]
+
+vif_df = df[cols_to_check_multi_collinearity].dropna()
+
+vif_df = add_constant(vif_df)
+vif_data = pd.DataFrame()
+vif_data["feature"] = vif_df.columns
+vif_data["VIF"] = [variance_inflation_factor(vif_df.values, i) for i in range(vif_df.shape[1])]
+
+print(vif_data)
+print()
+
+multicollinarity_cols = list(vif_data[vif_data["VIF"] > 10]["feature"])
+
+# remove cols with < 10 VIF
+
+cols = [col for col in cols if col not in multicollinarity_cols]
+
+df = df[cols]
+df = df.dropna()
+df = df.drop_duplicates(subset=["job_id"])
+#df["salary"] = df["salary"].apply(lambda i: np.log((i+1)/1000))
+df.set_index("job_id", inplace=True)
+
+assert df.shape[0] > 0 , "There are no values in the salary column"
+
+X = df.drop('salary', axis=1)
+y = df['salary']
+
+# Define categorical features
+
+categorical_features = ['job_family', 'occupational_area', "location_id", "company_name"]
+
+## train test split to get r squared value
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Initialize CatBoostRegressor
+
+model = CatBoostRegressor(cat_features=categorical_features, random_seed=42)
+
+# Fit the model
+
+model.fit(X_train, y_train, eval_set=(X_test,y_test) , verbose=False)
+
+predictions = model.predict(X_test)
+
+#predictions = np.exp(predictions)-1 * 1000
+
+#y_test = y_test.apply(lambda i: np.exp(i)-1 * 1000)
+
+# Calculate Mean Absolute Error
+
+mae = mean_absolute_error(y_test, predictions)
+print()
+print("Mean Absolute Error (MAE) for predicting salary:", mae)
+print()
+
+r2 = r2_score(y_test, predictions)
+print("R-squared (R²) for predicting salary:", r2)
+print()
+
+## run model on whole dataset to get feature importances
+
+model = CatBoostRegressor(cat_features=categorical_features, random_seed=42)
+
+# Fit the model on the entire dataset
+model.fit(X, y, verbose=False)
+
+## save model for future use
+
+# data = {
+#
+#     "job_id" : ["101"],
+#     "job_family" : ["Computer & Mathematical"],
+#     "occupational_area" : ["Computer & Mathematical"],
+#     "total_population_density": [5670],
+#     "total_land_area": [5.2],
+#     "years_of_experience": [10],
+#     "years_at_level" : [5],
+#     "total_housing_units": [11872],
+#     "location_id" : ["Middletown_New York"]
+# }
+#
+# data_df = pd.DataFrame(data)
+#
+# data_df = data_df.set_index('job_id')
+#
+# print(model.predict(data_df))
+#
+# model.save_model('catboost_model.cbm', format="cbm")
+#
+# print(X.head())
+#
+# import sys
+# sys.exit(1)
+
+#Bootstrap parameters
+# n_bootstraps = 250
+# alpha = 0.05
+# lower_quantile = alpha/2
+# upper_quantile = 1 - (alpha/2)
+#
+# # Store predictions from each bootstrap
+# bootstrap_predictions = []
+#
+# for _ in tqdm(range(n_bootstraps), desc="Calculating Bootstraps"):
+#     # Sample with replacement from X and y
+#     indices = np.random.choice(range(X.shape[0]), size=X.shape[0], replace=True)
+#     X_sample = X.iloc[indices]
+#     y_sample = y.iloc[indices]
+#
+#     # Fit the model on the bootstrap sample
+#     model.fit(X_sample, y_sample, verbose=False)
+#
+#     # Predict on the original dataset
+#     predictions = model.predict(X)
+#     bootstrap_predictions.append(predictions)
+#
+# # Calculate quantiles for the confidence interval
+# bootstrap_predictions = np.array(bootstrap_predictions)
+# lower_bounds = np.percentile(bootstrap_predictions, lower_quantile * 100, axis=0)
+# upper_bounds = np.percentile(bootstrap_predictions, upper_quantile * 100, axis=0)
+#
+# # Create DataFrame
+# X_predicted_df = X.reset_index()
+# X_predicted_df["predicted_salary"] = model.predict(X)
+# X_predicted_df["predicted_salary"] = X_predicted_df["predicted_salary"].apply(np.floor)
+# X_predicted_df["confidence_interval_lower_bound"] = lower_bounds
+# X_predicted_df["confidence_interval_lower_bound"] = X_predicted_df["confidence_interval_lower_bound"].astype(int)
+# X_predicted_df["confidence_interval_upper_bound"] = upper_bounds
+# X_predicted_df["confidence_interval_upper_bound"] = X_predicted_df["confidence_interval_upper_bound"].astype(int)
+# X_predicted_df.drop_duplicates(subset=["job_id"], inplace=True)
+# X_predicted_df = X_predicted_df[["job_id", "predicted_salary", "confidence_interval_lower_bound",
+#                                  "confidence_interval_upper_bound"]]
+#
+# insert_dataframe_to_bigquery(df=X_predicted_df,
+#                              dataset_table_name='living_wages_project.facts_jobs_model',
+#                              project_id=PROJECT_ID,
+#                              if_exists='replace')
 
 
 
 
+feature_importances = model.get_feature_importance()
+
+feature_names = X.columns
+
+for score, name in sorted(zip(feature_importances, feature_names), reverse=True):
+    print(f"{name} coefficient: {np.round(score,3)}")
 
 
+
+
+explainer = shap.TreeExplainer(model)
+shap_values = explainer.shap_values(X)
+
+plt.ioff()
+plt.switch_backend('agg')
+
+shap_means = np.abs(shap_values).mean(axis=0)
+
+# Sort the features and SHAP values in descending order of importance
+sorted_indices = np.argsort(shap_means)[::-1]
+sorted_shap_means = shap_means[sorted_indices]
+sorted_features = np.array(X_train.columns)[sorted_indices]
+
+# Create a bar chart
+plt.figure(figsize=(10, 8))
+y_pos = np.arange(len(sorted_features))
+bars = plt.barh(y_pos, sorted_shap_means, align='center', color='lightblue')
+plt.yticks(y_pos, sorted_features)
+plt.gca().invert_yaxis()  # Invert y-axis to have the bar with the highest value at the top
+plt.xlabel('mean(|SHAP value|)')
+plt.title('Feature Importance')
+
+# Add data labels to each bar, adjusting their position to prevent overlap
+for bar in bars:
+    width = bar.get_width()
+    label_x_pos = width if width >= 0 else 0
+    plt.text(label_x_pos, bar.get_y() + bar.get_height()/2, f'{width:.2f}',
+             va='center', ha='right' if width < 0 else 'left', color='black')
+
+plt.tight_layout()
+plt.savefig("shap_summary_plot.png", dpi=300)
+
+plt.clf()  # Clear the figure to prevent replotting of old data
+
+import sys
+sys.exit(1)
+
+
+lower_range = 0
+upper_range = 50000
+shap_values = explainer(X.iloc[lower_range:upper_range])
+
+for n in tqdm(range(upper_range - lower_range), desc="Generating SHAP plots"):
+    plt.figure(figsize=(12, 6))
+    shap.plots.waterfall(shap_values[n], show=False)
+    plt.savefig(
+        fr"C:\Users\Mudas\Documents\school\Baruch\Data Warehouse\data\Term Project\Analysis\shap_plots\shap_waterfall_plot_{n}.png",
+        dpi=300)
+
+    # Clear the current figure to prepare for the next plot
+    plt.clf()
+
+
+
+print()
+print("finished running script")
