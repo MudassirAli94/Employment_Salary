@@ -73,11 +73,11 @@ The final model is acceptable with a 0.66 R squared and our predictions being of
 Bar chart displaying feature importance
 ![image](https://github.com/KaiwenLian/CIS9440Group9/assets/38592433/d7aee691-7149-43e6-96f5-c8fb9708b0b4)
 
-This chart displays the mean shap values for each feature. Mean shap values describes the magnitude each variable has on our target variable, salary. Years of experience contributes the most to the accuracy of predicting our salary, job family (the type of job it is) following and so forth. For instance, a change in 'years_of_experience' has a corresponding significant effect on the salary prediction, with an average impact of approximately 23k. This does not necessarily mean our salary will increase or decrease by ~23k, it's the average weight that will impact our final salary.
+This chart displays the mean shap values for each feature. Mean shap values describes the magnitude each variable has on our target variable, salary. Years of experience contributes the most to the accuracy of predicting our salary, job family (the type of job it is) following and so forth. For instance, a change in 'years_of_experience' has a corresponding significant affect on the salary prediction, with an average impact of approximately 23k. This does not necessarily mean our salary will increase or decrease by ~23k, it's the average weight that will impact our final salary.
 
 More on shap values here: https://www.datacamp.com/tutorial/introduction-to-shap-values-machine-learning-interpretability
 
-Example of our model prediction:
+### Example of our model prediction:
 
 ![image](https://github.com/KaiwenLian/CIS9440Group9/assets/38592433/0dfd7ee5-c829-48aa-82f0-427c00188282)
 
