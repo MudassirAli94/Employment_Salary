@@ -68,10 +68,24 @@ More on catboosting here: https://catboost.ai/
 | Null Value - MIT Living Wages   | 1800    | 0.98    |
 | Final Model - Salary   | 24,374     | 0.66    |
 
-The final model is acceptable with a 0.66 R squared and our predictions being off by about 24k. Our smaller models range from decent to poor based on the r squared values.
+The final model is acceptable with a 0.66 R squared and our predictions being off by about 24k. Our smaller models range from decent to poor based on the r squared values. Our null value - MIT living wages model appears to either be overfitting or some type of leakage, however we will leave it alone for now because of the scope of the project.
 
-Bar chart displaying top coefficents affecting our salary
-![image](https://github.com/KaiwenLian/CIS9440Group9/assets/38592433/cad953e0-3f9a-4f51-9266-190f39f812c8)
+Bar chart displaying feature importance
+![image](https://github.com/KaiwenLian/CIS9440Group9/assets/38592433/d7aee691-7149-43e6-96f5-c8fb9708b0b4)
+
+This chart displays the mean shap values for each feature. Mean shap values describes the magnitude each variable has on our target variable, salary. Years of experience contributes the most to the accuracy of predicting our salary, job family (the type of job it is) following and so forth. For instance, a change in 'years_of_experience' has a corresponding significant effect on the salary prediction, with an average impact of approximately 23k. This does not necessarily mean our salary will increase or decrease by ~23k, it's the average weight that will impact our final salary.
+
+More on shap values here: https://www.datacamp.com/tutorial/introduction-to-shap-values-machine-learning-interpretability
+
+Example of our model prediction:
+
+![image](https://github.com/KaiwenLian/CIS9440Group9/assets/38592433/0dfd7ee5-c829-48aa-82f0-427c00188282)
+
+The blue tabs represent a decrease in salary while conversly, the red tabs indicate an increase in salary. Our bottom number E(f(x)) is the expectation of the model when we do not know any other features about this individual. It is the average salary of all our data points when there are no known features. This number, 146k is our baseline prediction, it is our starting prediction and based on our features this number can go up and down. 
+
+For the example shown, a software engineer working for ABB with 5 years of experience living in LA, California is predicted to make $166k, our f(x) the top right number. Each feature adjusts this baseline by either adding or subtracting from it, as depicted by the size and direction of the tabs.
+
+
 
 
 
