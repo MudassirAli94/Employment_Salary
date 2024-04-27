@@ -65,7 +65,7 @@ More on catboosting here: https://catboost.ai/
 | Null Value - Salary    | 32,395    | 0.40     |
 | Null Value - Years of Exp.   | 3.03    | 0.47    |
 | Null Value - Years at Level.   | 0.96    | 0.17     |
-| Null Value - MIT Living Wages   | 1800    | 0.98    |
+| Null Value - MIT Living Wages   | 1,800    | 0.98    |
 | Final Model - Salary   | 24,374     | 0.66    |
 
 The final model is acceptable with a 0.66 R squared and our predictions being off by about 24k. Our smaller models range from decent to poor based on the r squared values. Our null value - MIT living wages model appears to either be overfitting or some type of leakage, however we will leave it alone for now because of the scope of the project.
