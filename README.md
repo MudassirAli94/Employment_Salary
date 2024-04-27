@@ -8,7 +8,7 @@ Companies need to take into account different sets of variables when deciding on
 - minimum wages per state
 - DMA
 
-producing a dimensional modeling, breaking down these sources into a data warehouse via Google Cloud Platform (GCP) and performing an analysis breaking down the top coefficents for predicting a 95% confidence interval on the salary range.
+creating dimensional modeling, breaking down these sources into a data warehouse via Google Cloud Platform (GCP) and producing a predictive model that performs an analysis on breaking down the top coefficents for predicting a 95% confidence interval on the salary range.
 
 ## Information Architecture:
 
