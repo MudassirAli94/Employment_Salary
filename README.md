@@ -59,3 +59,13 @@ CatBoost, short for Categorical Boosting, is a specialized boosting model design
 More on catboosting here: https://catboost.ai/
 
 ## Model Results
+
+| Model | Mean Absolute Error (MAE) | R Squared |
+|----------|----------|----------|
+| Null Value - Salary    | 32395    | 0.40     |
+| Null Value - Years of Exp.   | 3.03    | 0.47    |
+| Null Value - Years at Level.   | 0.96    | 0.17     |
+| Null Value - MIT Living Wages   | 1800    | 0.98    |
+| Final Model - Salary   | 24374     | 0.66    |
+
+
