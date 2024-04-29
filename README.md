@@ -86,6 +86,11 @@ The blue tabs represent a decrease in salary while conversly, the red tabs indic
 For the example shown, a software engineer working for ABB with 5 years of experience living in LA, California is predicted to make $166k, our f(x) the top right number. Each feature adjusts this baseline by either adding or subtracting from it, as depicted by the size and direction of the tabs.
 
 
+# End
+
+![image](https://github.com/MudassirAli94/Employment_Salary/assets/38592433/346c71c5-a6c3-4b35-b31e-22089161b7ee)
+
+This is the final end product of combining all the data sources and the model into a power BI dashboard. The file is accessible above.
 
 
 
