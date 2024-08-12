@@ -555,3 +555,65 @@ for n in tqdm(range(upper_range - lower_range), desc="Generating SHAP plots"):
 
 print()
 print("finished running script")
+
+import pandas as pd
+import numpy as np
+import concurrent.futures
+
+# Sample data generation (replace with your actual data)
+df = pd.DataFrame({
+    'routingareacd': np.random.randint(0, 500, size=500*7*13),
+    'daynmmsched': np.random.randint(0, 7, size=500*7*13),
+    'scheduled_time': np.random.randint(0, 13, size=500*7*13),
+    'value': np.random.rand(500*7*13)  # Replace with your actual values
+})
+
+# Function to perform a bootstrap sample for each group
+def bootstrap_sample_group(df_group, n_bootstrap=1000):
+    bootstrap_means = []
+    for _ in range(n_bootstrap):
+        sample = df_group.sample(frac=1, replace=True)
+        bootstrap_means.append(sample['value'].mean())
+    return np.mean(bootstrap_means), np.std(bootstrap_means)
+
+# Get unique combinations of routingareacd, daynmmsched, and scheduled_time
+unique_combinations = df.groupby(['routingareacd', 'daynmmsched', 'scheduled_time'])
+
+# Prepare lists to store results
+routingareacd_list = []
+daynmmsched_list = []
+scheduled_time_list = []
+average_customer_intent_list = []
+average_std_customer_intent_list = []
+
+# Function to apply bootstrap sampling to each group
+def process_group(name, group):
+    routingareacd, daynmmsched, scheduled_time = name
+    avg_mean, avg_std = bootstrap_sample_group(group)
+    return routingareacd, daynmmsched, scheduled_time, avg_mean, avg_std
+
+# Parallel processing using concurrent.futures
+n_workers = 4  # Adjust based on your CPU cores
+with concurrent.futures.ProcessPoolExecutor(max_workers=n_workers) as executor:
+    results = list(executor.map(lambda item: process_group(*item), unique_combinations))
+
+# Unpack the results and append them to the corresponding lists
+for result in results:
+    routingareacd_list.append(result[0])
+    daynmmsched_list.append(result[1])
+    scheduled_time_list.append(result[2])
+    average_customer_intent_list.append(result[3])
+    average_std_customer_intent_list.append(result[4])
+
+# Create the final DataFrame
+final_df = pd.DataFrame({
+    'routingareacd': routingareacd_list,
+    'daynmmsched': daynmmsched_list,
+    'scheduled_time': scheduled_time_list,
+    'average_customer_intent': average_customer_intent_list,
+    'average_std_customer_intent': average_std_customer_intent_list
+})
+
+# Output the final DataFrame
+print(final_df.head())  # Show the first few rows of the DataFrame
+
