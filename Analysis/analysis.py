@@ -689,3 +689,60 @@ results_df = clt_bootstrap_optimized(df, sample_size, iterations, n_workers=8)
 print(results_df.head())
 
 
+import pandas as pd
+import numpy as np
+from tqdm import tqdm
+
+# Function to perform bootstrap sampling for a single group
+def bootstrap_group(group, sample_size, iterations):
+    bootstrap_means = np.zeros(iterations)
+    bootstrap_stds = np.zeros(iterations)
+    
+    for i in range(iterations):
+        bootstrap_sample = group.sample(n=sample_size, replace=True)
+        bootstrap_means[i] = bootstrap_sample["num_customer_intent"].mean()
+        bootstrap_stds[i] = bootstrap_sample["num_customer_intent"].std()
+
+    mean_of_means = np.round(np.mean(bootstrap_means), 3)
+    mean_of_std = np.round(np.mean(bootstrap_stds), 3)
+
+    return mean_of_means, mean_of_std
+
+# Main function to apply bootstrap across all groups
+def clt_bootstrap_optimized(df, sample_size, iterations):
+    results = []
+    
+    # Group the data by routingareacd, daynmmsched, and scheduled_time
+    grouped = df.groupby(["routingareacd", "daynmmsched", "scheduled_time"])
+
+    for name, group in tqdm(grouped, total=len(grouped)):
+        routingareacd, daynmmsched, scheduled_time = name
+        mean_of_means, mean_of_std = bootstrap_group(group, sample_size, iterations)
+
+        results.append({
+            "routingareacd": routingareacd,
+            "daynmmsched": daynmmsched,
+            "scheduled_time": scheduled_time,
+            "average_customer_intent": mean_of_means,
+            "average_std_customer_intent": mean_of_std
+        })
+
+    results_df = pd.DataFrame(results)
+    return results_df
+
+# Example usage
+df = pd.DataFrame({
+    "routingareacd": np.random.randint(0, 500, size=1000000),
+    "daynmmsched": np.random.randint(0, 7, size=1000000),
+    "scheduled_time": np.random.randint(0, 13, size=1000000),
+    "num_customer_intent": np.random.rand(1000000)
+})
+
+# Parameters
+sample_size = 100
+iterations = 1000
+
+# Run the optimized bootstrap function
+results_df = clt_bootstrap_optimized(df, sample_size, iterations)
+print(results_df.head())
+
