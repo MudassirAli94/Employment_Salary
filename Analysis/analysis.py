@@ -615,5 +615,77 @@ final_df = pd.DataFrame({
 })
 
 # Output the final DataFrame
-print(final_df.head())  # Show the first few rows of the DataFrame
+print(final_df.head())  # 
+Show the first few rows of the DataFrame
+
+
+
+
+
+
+import pandas as pd
+import numpy as np
+import concurrent.futures
+from tqdm import tqdm
+
+# Function to perform bootstrap sampling for a single group
+def bootstrap_group(group, sample_size, iterations):
+    bootstrap_means = np.zeros(iterations)
+    bootstrap_stds = np.zeros(iterations)
+    
+    for i in range(iterations):
+        bootstrap_sample = group.sample(n=sample_size, replace=True)
+        bootstrap_means[i] = bootstrap_sample["num_customer_intent"].mean()
+        bootstrap_stds[i] = bootstrap_sample["num_customer_intent"].std()
+
+    mean_of_means = np.round(np.mean(bootstrap_means), 3)
+    mean_of_std = np.round(np.mean(bootstrap_stds), 3)
+
+    return mean_of_means, mean_of_std
+
+# Main function to apply bootstrap across all groups
+def clt_bootstrap_optimized(df, sample_size, iterations, n_workers=4):
+    results = []
+    
+    # Group the data by routingareacd, daynmmsched, and scheduled_time
+    grouped = df.groupby(["routingareacd", "daynmmsched", "scheduled_time"])
+
+    # Parallel processing of groups
+    with concurrent.futures.ProcessPoolExecutor(max_workers=n_workers) as executor:
+        futures = {
+            executor.submit(bootstrap_group, group, sample_size, iterations): name
+            for name, group in grouped
+        }
+
+        for future in tqdm(concurrent.futures.as_completed(futures), total=len(futures)):
+            routingareacd, daynmmsched, scheduled_time = futures[future]
+            mean_of_means, mean_of_std = future.result()
+
+            results.append({
+                "routingareacd": routingareacd,
+                "daynmmsched": daynmmsched,
+                "scheduled_time": scheduled_time,
+                "average_customer_intent": mean_of_means,
+                "average_std_customer_intent": mean_of_std
+            })
+
+    results_df = pd.DataFrame(results)
+    return results_df
+
+# Example usage
+df = pd.DataFrame({
+    "routingareacd": np.random.randint(0, 500, size=1000000),
+    "daynmmsched": np.random.randint(0, 7, size=1000000),
+    "scheduled_time": np.random.randint(0, 13, size=1000000),
+    "num_customer_intent": np.random.rand(1000000)
+})
+
+# Parameters
+sample_size = 100
+iterations = 1000
+
+# Run the optimized bootstrap function
+results_df = clt_bootstrap_optimized(df, sample_size, iterations, n_workers=8)
+print(results_df.head())
+
 
